@@ -23,6 +23,11 @@ jobs:
       SRE_CI_EVIDENCE_DIR: ci-evidence
     steps:
       - uses: actions/checkout@v4
+      - name: Initialize persistent CI evidence
+        run: |
+          mkdir -p ci-evidence
+          git rev-parse HEAD > ci-evidence/commit.txt
+          uname -a > ci-evidence/runner.txt
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
