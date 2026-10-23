@@ -1,0 +1,49 @@
+groups:
+- name: demo
+  rules:
+  - alert: OrderErrors
+    annotations:
+      summary: Order requests are failing
+    expr: sum(rate(sre_http_requests_total{service="order",status=~"5.."}[30s])) >
+      0.1
+    for: 10s
+    labels:
+      environment: demo
+      service: order
+      severity: warning
+  - alert: DemoTargetDown
+    annotations:
+      summary: DemoTargetDown
+    expr: up{job="demo"} == 0
+    for: 10s
+    labels:
+      environment: demo
+      severity: warning
+  - alert: BusinessProbeFailed
+    annotations:
+      summary: BusinessProbeFailed
+    expr: sre_business_probe_success == 0
+    for: 10s
+    labels:
+      environment: demo
+      service: order
+      severity: warning
+  - alert: BusinessProbeStale
+    annotations:
+      summary: BusinessProbeStale
+    expr: time() - sre_business_probe_last_completed_unixtime > 30
+    for: 10s
+    labels:
+      environment: demo
+      service: order
+      severity: warning
+  - alert: GatewayErrors
+    annotations:
+      summary: GatewayErrors
+    expr: sum(rate(sre_http_requests_total{service="gateway",status=~"5.."}[30s]))
+      > 0.1
+    for: 10s
+    labels:
+      environment: demo
+      service: gateway
+      severity: warning

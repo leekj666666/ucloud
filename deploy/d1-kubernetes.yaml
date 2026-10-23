@@ -1,0 +1,419 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sre-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory
+  namespace: sre-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory
+  template:
+    metadata:
+      annotations:
+        cloudsre/image-id: sha256:32f28ad171348fbbf93859aea1d776899610a80b55e10c3ca494eb34cde659c8
+      labels:
+        app: inventory
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - command:
+        - uvicorn
+        - cloudsre.demo_serve:app
+        - --host
+        - 0.0.0.0
+        - --port
+        - '8000'
+        - --no-access-log
+        env:
+        - name: SERVICE_ROLE
+          value: inventory
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              key: DATABASE_URL
+              name: demo-db
+        - name: RELEASE_ID
+          value: v20261023.1
+        image: cloudsre-app:d1-complete
+        imagePullPolicy: Never
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        name: inventory
+        ports:
+        - containerPort: 8000
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        resources:
+          limits:
+            cpu: 500m
+            memory: 192Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory
+  namespace: sre-demo
+spec:
+  ports:
+  - nodePort: 30081
+    port: 8000
+    targetPort: 8000
+  selector:
+    app: inventory
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order
+  namespace: sre-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order
+  template:
+    metadata:
+      annotations:
+        cloudsre/image-id: sha256:32f28ad171348fbbf93859aea1d776899610a80b55e10c3ca494eb34cde659c8
+      labels:
+        app: order
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - command:
+        - uvicorn
+        - cloudsre.demo_serve:app
+        - --host
+        - 0.0.0.0
+        - --port
+        - '8000'
+        - --no-access-log
+        env:
+        - name: SERVICE_ROLE
+          value: order
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              key: DATABASE_URL
+              name: demo-db
+        - name: RELEASE_ID
+          value: v20261023.1
+        - name: INVENTORY_URL
+          value: http://inventory:8000
+        image: cloudsre-app:d1-complete
+        imagePullPolicy: Never
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        name: order
+        ports:
+        - containerPort: 8000
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        resources:
+          limits:
+            cpu: 500m
+            memory: 192Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order
+  namespace: sre-demo
+spec:
+  ports:
+  - nodePort: 30080
+    port: 8000
+    targetPort: 8000
+  selector:
+    app: order
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: sre-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      annotations:
+        cloudsre/image-id: sha256:32f28ad171348fbbf93859aea1d776899610a80b55e10c3ca494eb34cde659c8
+      labels:
+        app: gateway
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - command:
+        - uvicorn
+        - cloudsre.demo_serve:app
+        - --host
+        - 0.0.0.0
+        - --port
+        - '8000'
+        - --no-access-log
+        env:
+        - name: SERVICE_ROLE
+          value: gateway
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              key: DATABASE_URL
+              name: demo-db
+        - name: RELEASE_ID
+          value: v20261023.1
+        - name: ORDER_URL
+          value: http://order:8000
+        image: cloudsre-app:d1-complete
+        imagePullPolicy: Never
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        name: gateway
+        ports:
+        - containerPort: 8000
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        resources:
+          limits:
+            cpu: 500m
+            memory: 192Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: sre-demo
+spec:
+  ports:
+  - nodePort: 30082
+    port: 8000
+    targetPort: 8000
+  selector:
+    app: gateway
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: probe
+  namespace: sre-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: probe
+  template:
+    metadata:
+      annotations:
+        cloudsre/image-id: sha256:32f28ad171348fbbf93859aea1d776899610a80b55e10c3ca494eb34cde659c8
+      labels:
+        app: probe
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - command:
+        - uvicorn
+        - cloudsre.probe:app
+        - --host
+        - 0.0.0.0
+        - --port
+        - '8000'
+        - --no-access-log
+        env:
+        - name: SERVICE_ROLE
+          value: probe
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              key: DATABASE_URL
+              name: demo-db
+        - name: RELEASE_ID
+          value: v20261023.1
+        - name: GATEWAY_URL
+          value: http://gateway:8000
+        - name: INVENTORY_URL
+          value: http://inventory:8000
+        - name: CLOUDSRE_VERIFY_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              key: DATABASE_URL
+              name: demo-db
+        image: cloudsre-app:d1-complete
+        imagePullPolicy: Never
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        name: probe
+        ports:
+        - containerPort: 8000
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        resources:
+          limits:
+            cpu: 500m
+            memory: 192Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: probe
+  namespace: sre-demo
+spec:
+  ports:
+  - nodePort: 30083
+    port: 8000
+    targetPort: 8000
+  selector:
+    app: probe
+  type: NodePort
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: sre-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: read-logs
+  namespace: sre-demo
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ''
+  resources:
+  - pods/log
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alloy-logs
+  namespace: sre-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: read-logs
+subjects:
+- kind: ServiceAccount
+  name: alloy
+  namespace: sre-demo
+---
+apiVersion: v1
+data:
+  config.alloy: "discovery.kubernetes \"pods\" {\n  role = \"pod\"\n  namespaces {\
+    \ names = [\"sre-demo\"] }\n  selectors {\n    role = \"pod\"\n    label = \"\
+    app in (gateway,order,inventory,probe)\"\n  }\n}\ndiscovery.relabel \"logs\" {\n\
+    \  targets = discovery.kubernetes.pods.targets\n  rule {\n    source_labels =\
+    \ [\"__meta_kubernetes_pod_label_app\"]\n    target_label = \"service\"\n  }\n\
+    \  rule {\n    source_labels = [\"__meta_kubernetes_namespace\"]\n    target_label\
+    \ = \"namespace\"\n  }\n}\nloki.source.kubernetes \"pods\" {\n  targets = discovery.relabel.logs.output\n\
+    \  forward_to = [loki.write.local.receiver]\n}\nloki.write \"local\" {\n  endpoint\
+    \ { url = \"http://172.19.0.5:3100/loki/api/v1/push\" }\n}\n"
+kind: ConfigMap
+metadata:
+  name: alloy
+  namespace: sre-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alloy
+  namespace: sre-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      annotations:
+        cloudsre/config-hash: bb075fc926a151ff5b859561adcc3a4f4b2ad96c9d5fdd50c8ac93525fd53a7e
+      labels:
+        app: alloy
+    spec:
+      containers:
+      - args:
+        - run
+        - --storage.path=/tmp/alloy
+        - /etc/alloy/config.alloy
+        image: cloudsre-alloy:d1
+        imagePullPolicy: Never
+        name: alloy
+        resources:
+          limits:
+            cpu: 300m
+            memory: 192Mi
+          requests:
+            cpu: 20m
+            memory: 64Mi
+        volumeMounts:
+        - mountPath: /etc/alloy
+          name: config
+      serviceAccountName: alloy
+      volumes:
+      - configMap:
+          name: alloy
+        name: config

@@ -1,0 +1,101 @@
+name: sre-infra
+services:
+  postgres:
+    image: postgres@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
+    environment:
+      POSTGRES_USER: sre
+      POSTGRES_DB: sre
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+    - 127.0.0.1:15432:5432
+    volumes:
+    - pgdata:/var/lib/postgresql/data
+    mem_limit: 256m
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U sre -d sre
+      interval: 5s
+      retries: 20
+  prometheus:
+    image: prom/prometheus@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    command:
+    - --config.file=/etc/prometheus/prometheus.yml
+    - --storage.tsdb.retention.time=24h
+    ports:
+    - 127.0.0.1:19090:9090
+    volumes:
+    - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    - promdata:/prometheus
+    - ./rules.yml:/etc/prometheus/rules.yml:ro
+    mem_limit: 256m
+  alertmanager:
+    image: prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    command:
+    - --config.file=/etc/alertmanager/alertmanager.yml
+    ports:
+    - 127.0.0.1:19093:9093
+    volumes:
+    - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    mem_limit: 128m
+  loki:
+    image: grafana/loki@sha256:c316b7c7589a5eeca843b6926c7446149d18300b79ac8538dc4ae063bc478da2
+    command:
+    - -config.file=/etc/loki/local.yml
+    ports:
+    - 127.0.0.1:13100:3100
+    volumes:
+    - ./loki.yml:/etc/loki/local.yml:ro
+    - lokidata:/tmp/loki
+    mem_limit: 384m
+  grafana:
+    image: grafana/grafana@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    ports:
+    - 127.0.0.1:13000:3000
+    volumes:
+    - grafanadata:/var/lib/grafana
+    - ./grafana-provisioning:/etc/grafana/provisioning:ro
+    mem_limit: 256m
+  incident-api:
+    image: cloudsre-app:d1-complete
+    command:
+    - uvicorn
+    - cloudsre.serve:app
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8080'
+    environment:
+      DATABASE_URL: ${SRE_DATABASE_URL}
+    ports:
+    - 127.0.0.1:18080:8080
+    mem_limit: 192m
+  verifier-api:
+    image: cloudsre-app:d1-complete
+    command:
+    - uvicorn
+    - cloudsre.verifier_api:app
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8080'
+    - --no-access-log
+    user: 1000:1000
+    environment:
+      CLOUDSRE_VERIFY_DATABASE_URL: ${SRE_DEMO_DATABASE_URL}
+      CLOUDSRE_VERIFY_EVIDENCE_DIR: /evidence
+      GATEWAY_URL: http://sre-dev-control-plane:30082
+      INVENTORY_URL: http://sre-dev-control-plane:30081
+    ports:
+    - 127.0.0.1:18084:8080
+    volumes:
+    - /home/lee/sre-project/evaluation/verifier-api:/evidence
+    mem_limit: 192m
+volumes:
+  pgdata: null
+  promdata: null
+  lokidata: null
+  grafanadata: null

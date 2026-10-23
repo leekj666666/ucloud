@@ -1,0 +1,16 @@
+*
+!pyproject.toml
+!uv.lock
+!backend/
+!backend/**
+!scripts/
+!scripts/**
+!deploy/
+!deploy/**
+**/__pycache__
+
+**/__pycache__/
+
+**/*.pyc
+
+**/*.pyo

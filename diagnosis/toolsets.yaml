@@ -1,0 +1,10 @@
+toolsets:
+  sre-monitoring:
+    description: Read-only local monitoring
+    enabled: true
+    tags:
+    - core
+    tools:
+    - command: /home/lee/sre-project/.venv/bin/python /home/lee/sre-project/diagnosis/read_monitoring.py
+      description: Read the up metric from local Prometheus; no arguments.
+      name: get_monitoring_health
