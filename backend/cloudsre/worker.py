@@ -1,4 +1,4 @@
-"""Single local worker: durable phases, bounded investigation, narrow execution."""
+"""Bounded diagnosis, version-bound mutation and independent recovery verification."""
 
 import json
 import os
@@ -14,11 +14,12 @@ import yaml
 from dotenv import dotenv_values
 from sqlalchemy import text
 
-from .business_verify import verify
+from .call_ledger import summarize
 from .domain import Status
 from .kube import deployment_snapshot, guarded_patch, inventory_snapshot, read
 from .policy import parse_proposal, validate_plan
-from .ports import INVENTORY_URL, ORDER_URL, business_ports
+from .quality import request, run_window
+from .reporting import versions, write_report
 from .store import Store
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,78 +51,101 @@ def desired_url():
 
 def eligible(store, row):
     receipts = store.receipts(row["id"])
+    cutoff = os.environ.get("CLOUDSRE_INCIDENT_NOT_BEFORE")
     return (
         row["status"] == Status.NEW
         and row["service"] == "order"
+        and (not cutoff or row["created_at"] >= cutoff)
         and any(r["status"] == "firing" for r in receipts)
         and not any(r["status"] == "resolved" for r in receipts)
     )
 
 
 def run_incident(store, row, lease_check=lambda: None):
-    ident = row["id"]
-    runid = uuid.uuid4().hex
+    ident, runid = row["id"], uuid.uuid4().hex
     folder = ROOT / "evaluation/runs" / ("d2-" + runid)
     folder.mkdir(parents=True)
     (folder / "incident.json").write_text(
-        json.dumps({"id": ident, "title": row["title"], "service": row["service"]})
+        json.dumps({k: row[k] for k in ("id", "title", "service")})
     )
-    state = Status.NEW
+    software = versions(ROOT)
+    state, phase_start = Status.NEW, time.monotonic()
     journal = {
         "incident_id": ident,
         "run_id": runid,
         "events": [],
+        "phase_seconds": {},
         "outcome": "running",
         "verification": [],
+        "versions": software,
     }
 
+    def persist():
+        store.save_run(runid, ident, state, journal)
+        temp = folder / "workflow.tmp"
+        temp.write_text(json.dumps(journal, ensure_ascii=False, indent=2))
+        temp.replace(folder / "workflow.json")
+
     def checkpoint(target, **values):
-        nonlocal state
+        nonlocal state, phase_start
+        elapsed = time.monotonic() - phase_start
+        journal["phase_seconds"][str(state)] = (
+            journal["phase_seconds"].get(str(state), 0) + elapsed
+        )
+        phase_start = time.monotonic()
         if state != target:
             store.transition(ident, state, target, diagnosis=journal.get("answer"))
             state = target
         journal.update(values)
         journal["events"].append({"phase": state, "at": now()})
-        store.save_run(runid, ident, state, journal)
-        (folder / "workflow.json").write_text(
-            json.dumps(journal, ensure_ascii=False, indent=2)
-        )
+        persist()
 
-    # Competing claim failures stop here without modifying another worker's run.
     store.transition(ident, Status.NEW, Status.INVESTIGATING)
     state = Status.INVESTIGATING
     checkpoint(state)
     try:
+        baseline_path = Path(os.environ["CLOUDSRE_HEALTHY_BASELINE"])
+        baseline = json.loads(baseline_path.read_text())
+        if not baseline.get("passed") or baseline["duration_seconds"] < 120:
+            raise ValueError("Verified same-load healthy baseline required")
+        journal["baseline"] = {
+            "path": str(baseline_path),
+            "p95_seconds": baseline["p95_seconds"],
+            "samples_sha256": baseline["samples_sha256"],
+        }
         env = {**os.environ, "CLOUDSRE_RUN_DIR": str(folder)}
         key = dotenv_values("/mnt/d/uclaude/model.env").get("DEEPSEEK_API_KEY", "")
-        p = subprocess.run(
-            [
-                str(ROOT / ".venv-holmes/bin/python"),
-                str(ROOT / "diagnosis/incident_runner.py"),
-                str(folder),
-            ],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=180,
-            check=False,
-        )
-        output = p.stdout + "\n" + p.stderr
+        try:
+            p = subprocess.run(
+                [
+                    str(ROOT / ".venv-holmes/bin/python"),
+                    str(ROOT / "diagnosis/incident_runner.py"),
+                    str(folder),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=180,
+                check=False,
+            )
+            output = p.stdout + "\n" + p.stderr
+        except subprocess.TimeoutExpired as exc:
+            output = str(exc.stdout or "") + "\n" + str(exc.stderr or "")
+            if key:
+                output = output.replace(key, "[REDACTED]")
+            (folder / "diagnosis-process.log").write_text(output)
+            raise RuntimeError(
+                "Diagnosis timed out; started HTTP attempts retain unknown usage"
+            ) from None
         if key:
             output = output.replace(key, "[REDACTED]")
         (folder / "diagnosis-process.log").write_text(output)
+        journal["usage"] = summarize(folder / "calls.jsonl")
         if p.returncode != 0:
             raise RuntimeError("Diagnosis process failed; inspect redacted log")
         raw = json.loads((folder / "holmes-result.json").read_text())
-        journal["usage"] = {
-            k: raw.get(k)
-            for k in [
-                "total_tokens",
-                "prompt_tokens",
-                "completion_tokens",
-                "num_llm_calls",
-            ]
-        }
+        if journal["usage"]["http_attempts"] < int(raw.get("num_llm_calls") or 1):
+            raise RuntimeError("Model HTTP accounting incomplete; action refused")
         journal["answer"] = raw["result"]
         proposal = parse_proposal(raw["result"])
         journal["proposal"] = proposal.model_dump()
@@ -140,18 +164,7 @@ def run_incident(store, row, lease_check=lambda: None):
             Status.EXECUTING,
             action={"state": "intent_recorded", "before": current, "policy": allowed},
         )
-        try:
-            after = guarded_patch(current, allowed["old"], allowed["new"], ident)
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-            # Reconcile an ambiguous outcome without repeating the mutation.
-            after = deployment_snapshot(read("deployment", "order"))
-            if (
-                after["env"].get("INVENTORY_URL") != allowed["new"]
-                or after["env"].get("RELEASE_ID") != "d2-repair-" + ident[:8]
-            ):
-                raise RuntimeError(
-                    "Action outcome unknown or not applied; no automatic retry"
-                ) from None
+        after = guarded_patch(current, allowed["old"], allowed["new"], ident)
         checkpoint(
             Status.VERIFYING,
             action={
@@ -161,60 +174,49 @@ def run_incident(store, row, lease_check=lambda: None):
                 "policy": allowed,
             },
         )
-        target_release = "d2-repair-" + ident[:8]
-        for attempt in range(45):
-            try:
-                if (
-                    httpx.get(ORDER_URL + "/health", timeout=2).headers.get(
-                        "x-release-id"
-                    )
-                    == target_release
-                ):
-                    break
-            except httpx.HTTPError:
-                pass
-            if attempt == 44:
-                raise RuntimeError("Port forward did not reconnect to repaired release")
-            time.sleep(1)
-        window = int(os.environ.get("CLOUDSRE_VERIFY_SECONDS", "120"))
-        if not 30 <= window <= 300:
-            raise ValueError("Verification window must be 30..300 seconds")
-        started = time.monotonic()
-        while True:
-            sample = verify(ORDER_URL, INVENTORY_URL)
-            journal["verification"].append({"at": now(), "result": sample})
-            checkpoint(state)
-            if not sample["passed"]:
-                raise RuntimeError(
-                    "Business verification failed after repair; needs investigation"
-                )
-            if time.monotonic() - started >= window:
+        journal["warmup"] = []
+        end = time.monotonic() + 45
+        while time.monotonic() < end:
+            sample = request("/verify")
+            journal["warmup"].append({"at": now(), "result": sample})
+            persist()
+            if sample.get("passed"):
                 break
-            time.sleep(max(0, min(10, window - (time.monotonic() - started))))
+            time.sleep(2)
+        else:
+            raise RuntimeError("Normal-entry business path did not recover")
+        quality = run_window(folder / "recovery-quality", baseline)
+        journal["quality"] = quality
+        if not quality["passed"]:
+            raise RuntimeError("Recovery quality gates failed")
         final = deployment_snapshot(read("deployment", "order"))
-        if final["uid"] != after["uid"] or final["env"] != after["env"]:
-            raise RuntimeError("Configuration changed during verification")
+        if any(final[k] != after[k] for k in ("uid", "generation", "spec_hash")):
+            raise RuntimeError("Deployment changed during verification")
         checkpoint(
             Status.RESOLVED,
             outcome="agent_restored_and_verified",
-            verification_window_seconds=window,
+            verification_window_seconds=120,
         )
     except (
         ValueError,
         RuntimeError,
-        subprocess.SubprocessError,
-        httpx.HTTPError,
         OSError,
         KeyError,
         TypeError,
+        httpx.HTTPError,
+        subprocess.SubprocessError,
     ) as exc:
-        # Preserve improved state on uncertain failure; do not blindly reapply a bad config.
         checkpoint(
             Status.ESCALATED,
             outcome="needs_human",
             error_type=type(exc).__name__,
             error=str(exc)[:500],
         )
+    finally:
+        journal["usage"] = summarize(folder / "calls.jsonl")
+        report = write_report(folder, journal, software)
+        journal["report"] = {"path": report["path"], "sha256": report["sha256"]}
+        persist()
     print(
         json.dumps({"incident_id": ident, "status": state, "run_id": runid}), flush=True
     )
@@ -236,17 +238,22 @@ def main():
             ).scalar():
                 raise RuntimeError("Executor lease lost")
 
-        with business_ports():
-            print(
-                "Worker ready; automatic policy limited to sre-demo/order INVENTORY_URL",
-                flush=True,
-            )
-            while True:
-                lease_check()
-                for row in reversed(store.list()):
-                    if eligible(store, row):
-                        run_incident(store, row, lease_check)
-                time.sleep(2)
+        print(
+            "Worker ready; automatic policy limited to sre-demo/order INVENTORY_URL",
+            flush=True,
+        )
+        handled = 0
+        while True:
+            lease_check()
+            for row in reversed(store.list()):
+                if eligible(store, row):
+                    run_incident(store, row, lease_check)
+                    handled += 1
+                    if handled >= int(
+                        os.environ.get("CLOUDSRE_MAX_INCIDENTS", "1000000")
+                    ):
+                        return
+            time.sleep(2)
 
 
 if __name__ == "__main__":

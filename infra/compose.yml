@@ -74,7 +74,7 @@ services:
     - 127.0.0.1:18080:8080
     mem_limit: 192m
   verifier-api:
-    image: cloudsre-app:d1-complete
+    image: cloudsre-app:d2-complete
     command:
     - uvicorn
     - cloudsre.verifier_api:app

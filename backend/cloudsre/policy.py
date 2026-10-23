@@ -41,6 +41,8 @@ def validate_plan(plan, evidence, current, desired, inventory):
     if not any(
         d["uid"] == current["uid"]
         and d["generation"] == current["generation"]
+        and d.get("spec_hash") == current.get("spec_hash")
+        and d.get("image") == current.get("image")
         and d["env"].get("INVENTORY_URL") == plan.expected_current
         for d in deployment
     ):

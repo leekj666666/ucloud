@@ -142,7 +142,9 @@ def main():
         if cleanup.returncode:
             report["passed"] = False
         (folder / "result.json").write_text(json.dumps(report, indent=2))
-        Path("/mnt/d/uclaude/d1-quality.json").write_text(json.dumps(report, indent=2))
+        Path(
+            os.environ.get("CLOUDSRE_QUALITY_RESULT", "/mnt/d/uclaude/d1-quality.json")
+        ).write_text(json.dumps(report, indent=2))
         log.close()
     assert report["cleanup"]["container_and_anonymous_volumes_removed"], report
 

@@ -1,5 +1,7 @@
 """Narrow Kubernetes operations for this local demo. No model shell commands."""
 
+import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -30,6 +32,12 @@ def read(resource, name=None):
     return json.loads(result.stdout)
 
 
+def spec_digest(spec):
+    return hashlib.sha256(
+        json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def deployment_snapshot(raw):
     container = next(
         c for c in raw["spec"]["template"]["spec"]["containers"] if c["name"] == "order"
@@ -50,6 +58,7 @@ def deployment_snapshot(raw):
         .get("metadata", {})
         .get("annotations", {})
         .get("cloudsre/image-id"),
+        "spec_hash": spec_digest(raw["spec"]),
         "env": env,
         "ready_replicas": raw.get("status", {}).get("readyReplicas", 0),
     }
@@ -75,17 +84,41 @@ def inventory_snapshot():
 
 
 def guarded_patch(snapshot, old, new, incident_id):
-    # JSON Patch test is an atomic concurrency precondition on the API server.
+    if snapshot.get("name") != "order" or snapshot.get("namespace") != "sre-demo":
+        raise ValueError("Unsupported execution target")
     raw = read("deployment", "order")
     current = deployment_snapshot(raw)
-    if current["uid"] != snapshot["uid"] or current["env"].get("INVENTORY_URL") != old:
-        raise ValueError("Deployment changed before execution")
-    containers = raw["spec"]["template"]["spec"]["containers"]
-    ci = next(i for i, c in enumerate(containers) if c["name"] == "order")
-    env = containers[ci].get("env", [])
+    binding = (
+        "uid",
+        "generation",
+        "resource_version",
+        "image",
+        "image_content_id",
+        "spec_hash",
+    )
+    if (
+        any(current.get(k) != snapshot.get(k) for k in binding)
+        or current["env"].get("INVENTORY_URL") != old
+    ):
+        raise ValueError(
+            "Deployment changed before execution; reinvestigation required"
+        )
+    ci = next(
+        i
+        for i, c in enumerate(raw["spec"]["template"]["spec"]["containers"])
+        if c["name"] == "order"
+    )
+    env = raw["spec"]["template"]["spec"]["containers"][ci]["env"]
     ei = next(i for i, e in enumerate(env) if e["name"] == "INVENTORY_URL")
     ri = next(i for i, e in enumerate(env) if e["name"] == "RELEASE_ID")
+    release = "r-" + incident_id.replace("-", "")[:16]
+    expected = copy.deepcopy(raw["spec"])
+    expected_env = expected["template"]["spec"]["containers"][ci]["env"]
+    expected_env[ei]["value"] = new
+    expected_env[ri]["value"] = release
     patch = [
+        {"op": "test", "path": "/metadata/uid", "value": current["uid"]},
+        {"op": "test", "path": "/metadata/generation", "value": current["generation"]},
         {
             "op": "test",
             "path": "/metadata/resourceVersion",
@@ -104,17 +137,31 @@ def guarded_patch(snapshot, old, new, incident_id):
         {
             "op": "replace",
             "path": f"/spec/template/spec/containers/{ci}/env/{ri}/value",
-            "value": "d2-repair-" + incident_id[:8],
+            "value": release,
         },
     ]
-    subprocess.run(
-        PREFIX
-        + ["patch", "deployment", "order", "--type=json", "-p", json.dumps(patch)],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
+    ambiguous = False
+    try:
+        subprocess.run(
+            PREFIX
+            + ["patch", "deployment", "order", "--type=json", "-p", json.dumps(patch)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        ambiguous = True
+    # Every write outcome is read back. Never resend a possibly applied mutation.
+    after = deployment_snapshot(read("deployment", "order"))
+    if (
+        after["uid"] != current["uid"]
+        or after["generation"] != current["generation"] + 1
+        or after["spec_hash"] != spec_digest(expected)
+    ):
+        raise RuntimeError(
+            "Action outcome unknown, rejected, or changed; no automatic retry"
+        )
     subprocess.run(
         PREFIX + ["rollout", "status", "deployment/order", "--timeout=120s"],
         check=True,
@@ -122,7 +169,8 @@ def guarded_patch(snapshot, old, new, incident_id):
         text=True,
         timeout=130,
     )
-    after = deployment_snapshot(read("deployment", "order"))
-    if after["env"].get("INVENTORY_URL") != new:
-        raise RuntimeError("Patch readback failed")
-    return after
+    final = deployment_snapshot(read("deployment", "order"))
+    if any(final[k] != after[k] for k in ("uid", "generation", "spec_hash")):
+        raise RuntimeError("Deployment changed during rollout")
+    final["ambiguous_write_reconciled"] = ambiguous
+    return final

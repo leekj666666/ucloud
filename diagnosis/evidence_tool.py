@@ -31,6 +31,12 @@ def collect(kind):
                 for c in r["spec"]["template"]["spec"]["containers"]
                 if c["name"] == "order"
             )
+            if (
+                os.environ.get("CLOUDSRE_EVIDENCE_SINCE")
+                and r["metadata"]["creationTimestamp"]
+                < os.environ["CLOUDSRE_EVIDENCE_SINCE"]
+            ):
+                continue
             history.append(
                 {
                     "revision": r["metadata"]
@@ -65,7 +71,24 @@ def collect(kind):
         query = '{namespace="sre-demo",service="order"} | json | event="inventory_unavailable"'
         r = httpx.get(
             "http://localhost:13100/loki/api/v1/query_range",
-            params={"query": query, "limit": 12, "since": "5m"},
+            params={
+                "query": query,
+                "limit": 24,
+                **(
+                    {
+                        "start": str(
+                            int(
+                                datetime.fromisoformat(
+                                    os.environ["CLOUDSRE_EVIDENCE_SINCE"]
+                                ).timestamp()
+                                * 1e9
+                            )
+                        )
+                    }
+                    if os.environ.get("CLOUDSRE_EVIDENCE_SINCE")
+                    else {"since": "5m"}
+                ),
+            },
             timeout=10,
         )
         r.raise_for_status()

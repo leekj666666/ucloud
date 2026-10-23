@@ -6,6 +6,7 @@ import os
 from fastapi import FastAPI
 
 from .business_verify import verify
+from .load_verify import sample
 
 app = FastAPI(title="Cloud SRE independent business verifier")
 
@@ -22,4 +23,11 @@ def health():
 async def verify_business():
     return await asyncio.to_thread(
         verify, os.environ["GATEWAY_URL"], os.environ["INVENTORY_URL"]
+    )
+
+
+@app.post("/sample")
+async def load_sample():
+    return await asyncio.to_thread(
+        sample, os.environ["GATEWAY_URL"], os.environ["INVENTORY_URL"]
     )

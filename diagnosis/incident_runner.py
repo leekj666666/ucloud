@@ -19,6 +19,10 @@ root = Path(__file__).resolve().parents[1]
 out = Path(sys.argv[1]).resolve()
 os.environ["CLOUDSRE_RUN_DIR"] = str(out)
 cfg = dotenv_values("/mnt/d/uclaude/model.env")
+sys.path.insert(0, str(root / "backend"))
+from cloudsre.call_ledger import install_http_ledger
+
+install_http_ledger(out / "calls.jsonl", cfg["OPENAI_BASE_URL"])
 incident = json.loads((out / "incident.json").read_text())
 specs = [
     (
