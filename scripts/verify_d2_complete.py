@@ -105,7 +105,7 @@ def main():
             "CLOUDSRE_HEALTHY_BASELINE": str(folder / "healthy-baseline/result.json"),
             "CLOUDSRE_EVIDENCE_SINCE": since,
             "CLOUDSRE_INCIDENT_NOT_BEFORE": cutoff,
-            "CLOUDSRE_MAX_INCIDENTS": "1",
+            "CLOUDSRE_MAX_INCIDENTS": "2",
         }
         log = (folder / "worker.log").open("w")
         worker = subprocess.Popen(
@@ -234,13 +234,15 @@ def main():
         report["checks"]["recovery_load_matches_healthy_baseline"] = True
         report["final_business"] = request("/verify")
         assert report["final_business"]["passed"]
+        assert worker.poll() is None, "Duplicate acceptance requires a live worker"
         firing = next(x for x in receipts if x["status"] == "firing")
         httpx.post(
             API + "/webhooks/alertmanager",
             json={"alerts": [firing["payload"]]},
             timeout=10,
         ).raise_for_status()
-        time.sleep(3)
+        time.sleep(5)
+        assert worker.poll() is None, "Worker stopped during duplicate acceptance"
         assert len(runs(ident)) == 1
         report["checks"]["duplicate_alert_did_not_repeat_action"] = True
         report["passed"] = True
