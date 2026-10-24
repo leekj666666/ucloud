@@ -97,6 +97,25 @@ def collect(kind):
     raise ValueError("Unknown evidence tool")
 
 
+def model_view(record):
+    """Retain every fetched log line; omit redundant labels and server statistics."""
+    if record["kind"] != "logs":
+        return record
+    data = record["data"]
+    response = data["response"]
+    lines = [
+        {"timestamp": timestamp, "line": line}
+        for stream in response["data"]["result"]
+        for timestamp, line in stream.get("values", [])
+    ]
+    return {
+        **{k: v for k, v in record.items() if k != "data"},
+        "view": "all_fetched_log_lines_without_duplicate_labels_or_query_stats",
+        "data": {"query": data["query"], "status": response["status"], "lines": lines},
+        "raw_evidence_retained": True,
+    }
+
+
 if __name__ == "__main__":
     kind = sys.argv[1]
     data = collect(kind)
@@ -115,4 +134,4 @@ if __name__ == "__main__":
     folder = Path(os.environ["CLOUDSRE_RUN_DIR"]) / "evidence"
     folder.mkdir(exist_ok=True, parents=True)
     (folder / (ident + ".json")).write_text(json.dumps(record, ensure_ascii=False))
-    print(json.dumps(record, ensure_ascii=False))
+    print(json.dumps(model_view(record), ensure_ascii=False, separators=(",", ":")))
