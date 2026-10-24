@@ -12,7 +12,8 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-from cloudsre.kube import deployment_snapshot, inventory_snapshot, read
+from cloudsre.kube import deployment_snapshot
+from cloudsre.kube_readonly import inventory_snapshot, read
 
 
 def collect(kind):
@@ -104,6 +105,7 @@ if __name__ == "__main__":
         "id": ident,
         "kind": kind,
         "collected_at": datetime.now(UTC).isoformat(),
+        "query_window_start": os.environ.get("CLOUDSRE_EVIDENCE_SINCE"),
         "data": data,
         "content_hash": hashlib.sha256(
             json.dumps(data, sort_keys=True).encode()
