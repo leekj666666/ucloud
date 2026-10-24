@@ -1,6 +1,6 @@
 import copy
 
-from cloudsre.evidence_v3 import model_view, release_revisions
+from cloudsre.evidence_v3 import compact_release_timeline, model_view, release_revisions
 from test_actions_v3 import resource
 
 
@@ -32,11 +32,44 @@ def test_compaction_keeps_release_timeline_and_query_truncation():
             "pods": [],
             "events": [],
             "endpoints": [],
-            "release_revisions": [{"uid": "release-id", "created_at": "observed-time"}],
+            "release_revisions": [
+                {
+                    "uid": "release-id",
+                    "created_at": "observed-time",
+                    "owners": [{"name": "order", "uid": "owner"}],
+                    "containers": [],
+                }
+            ],
             "event_query": {"limit": 50, "truncated": True},
         },
     }
     compact = model_view(record)
     assert compact["data"]["event_query"]["truncated"] is True
-    assert compact["data"]["release_revisions"] == record["data"]["release_revisions"]
+    timeline = compact["data"]["release_timeline"]
+    assert timeline["revision_count"] == 1
+    assert timeline["groups"][0]["revisions"][0][:2] == ["release-id", "observed-time"]
     assert "event_view_limit" not in record["data"]
+
+
+def test_release_compaction_keeps_all_revisions_and_exact_configuration_values():
+    revisions = [
+        {
+            "uid": str(i),
+            "created_at": str(i),
+            "revision": str(i),
+            "owners": [{"name": "order", "uid": "owner"}],
+            "containers": [{"image": "immutable", "env": {"RELEASE_ID": str(i % 2)}}],
+        }
+        for i in range(40)
+    ]
+    timeline = compact_release_timeline(revisions)
+    group = timeline["groups"][0]
+    assert len(group["configurations"]) == 2
+    assert len(group["revisions"]) == timeline["revision_count"] == 40
+    for row, original in zip(group["revisions"], revisions, strict=True):
+        assert row[:3] == [
+            original["uid"],
+            original["created_at"],
+            original["revision"],
+        ]
+        assert group["configurations"][row[3]]["containers"] == original["containers"]

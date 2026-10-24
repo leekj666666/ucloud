@@ -73,10 +73,6 @@ class KubeGateway:
         core = client.CoreV1Api(self.api)
         events = self._call(core.list_namespaced_event, namespace=namespace, limit=50)
         return {
-            "replicasets": self._call(
-                client.AppsV1Api(self.api).list_namespaced_replica_set,
-                namespace=namespace,
-            )["items"],
             "event_query": {
                 "limit": 50,
                 "truncated": bool(events.get("metadata", {}).get("continue")),
@@ -88,3 +84,11 @@ class KubeGateway:
             )["items"],
             "events": events["items"],
         }
+
+    def releases(self, namespace):
+        if namespace not in NAMESPACES:
+            raise ValueError("Unapproved namespace")
+        return self._call(
+            client.AppsV1Api(self.api).list_namespaced_replica_set,
+            namespace=namespace,
+        )["items"]

@@ -65,7 +65,7 @@ def collect(kind, folder):
     if namespace not in NAMESPACES:
         raise ValueError("Evidence namespace outside allowlist")
     since = incident["evidence_since"]
-    if kind in {"resources", "observations", "baseline"}:
+    if kind in {"resources", "observations", "baseline", "releases"}:
         gateway = KubeGateway("read")
         try:
             if kind == "resources":
@@ -76,9 +76,12 @@ def collect(kind, folder):
                         for n in ("gateway", "order", "inventory")
                     ]
                 }
+            if kind == "releases":
+                return {
+                    "release_revisions": release_revisions(gateway.releases(namespace))
+                }
             if kind == "observations":
                 data = gateway.observations(namespace)
-                data["release_revisions"] = release_revisions(data.pop("replicasets"))
                 data["pods"] = [
                     {
                         "name": p["metadata"]["name"],
@@ -149,6 +152,42 @@ def collect(kind, folder):
     raise ValueError("Unsupported evidence kind")
 
 
+def compact_release_timeline(revisions):
+    """Keep every fetched revision; intern repeated configurations and owner IDs."""
+    groups = {}
+    for item in revisions:
+        for owner in item["owners"]:
+            group = groups.setdefault(
+                owner["uid"],
+                {
+                    "deployment": owner["name"],
+                    "deployment_uid": owner["uid"],
+                    "configurations": [],
+                    "revisions": [],
+                },
+            )
+            config = {
+                "containers": item["containers"],
+                "image_content_id": item.get("image_content_id"),
+            }
+            if config not in group["configurations"]:
+                group["configurations"].append(config)
+            group["revisions"].append(
+                [
+                    item["uid"],
+                    item["created_at"],
+                    item.get("revision"),
+                    group["configurations"].index(config),
+                ]
+            )
+    return {
+        "timestamp_semantics": "ReplicaSet creation time; not CI publication time",
+        "columns": ["replicaset_uid", "created_at", "revision", "configuration_index"],
+        "revision_count": len(revisions),
+        "groups": list(groups.values()),
+    }
+
+
 def model_view(record):
     view = copy.deepcopy(record)
     data = view["data"]
@@ -173,6 +212,10 @@ def model_view(record):
                     k: spec[k] for k in ("ports", "selector", "type") if k in spec
                 }
             item.pop("status", None)
+    if "release_revisions" in data:
+        data["release_timeline"] = compact_release_timeline(
+            data.pop("release_revisions")
+        )
     if record["kind"] == "observations":
         pods = data["pods"]
         data["pods"] = [

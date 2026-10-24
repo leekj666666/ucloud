@@ -26,7 +26,7 @@ def main():
         cases = list(
             ET.parse(Path(base["log"]).parent / "pytest.xml").getroot().iter("testcase")
         )
-        assert len(cases) >= 91
+        assert len(cases) >= 92
         assert all(
             not any(c.tag in {"skipped", "failure", "error"} for c in case)
             for case in cases

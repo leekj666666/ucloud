@@ -34,6 +34,11 @@ specs = [
         "baseline",
         "Read independently verified healthy resource versions; timing alone is not causal proof.",
     ),
+    (
+        "get_release_history",
+        "releases",
+        "Read all retained ReplicaSet revision times, owner UIDs and public configuration history; time correlation alone is not causation.",
+    ),
     ("get_error_logs", "logs", "Read actual recent dependency failure logs."),
     (
         "get_request_metrics",
@@ -86,7 +91,7 @@ Value types are strict: restore_env.value is the exact scalar URL STRING from th
 restore_env only order.INVENTORY_URL or gateway.ORDER_URL. restore_service_port repairs Service targetPort.
 restore_replicas restores a known healthy replica count in 1..2. restore_resources restores verified healthy container resource limits following resource-pressure evidence.
 Do not rollback an unrelated deployment. Escalate if evidence is insufficient, tool permissions fail, data compatibility is uncertain or no bounded permitted action can address the cause.
-Read current resources and runtime dependencies before any proposal; cite the healthy baseline and observed symptoms. Never invent evidence or treat the baseline alone as root cause proof."""
+Read current resources, runtime dependencies and release history before any proposal; cite the healthy baseline and observed symptoms. Never invent evidence or treat the baseline alone as root cause proof."""
 result = ai.call(
     [
         {"role": "system", "content": system},

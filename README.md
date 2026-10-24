@@ -12,6 +12,6 @@ D3 使用持久化工作流、PostgreSQL 租约、不可变动作意图及写后
 PYTHONPATH=backend .venv/bin/python scripts/quality_d3.py
 ```
 
-本地与远端 CI 要求至少 91 项测试、零跳过，包含真实 PostgreSQL 集成测试、镜像构建和告警规则验证。实机故障、并发与进程接管另行验收，不能用单元测试代替。远端状态以 [GitHub Actions](https://github.com/leekj666666/ucloud/actions) 的对应提交记录为准。
+本地与远端 CI 要求至少 92 项测试、零跳过，包含真实 PostgreSQL 集成测试、镜像构建和告警规则验证。实机故障、并发与进程接管另行验收，不能用单元测试代替。远端状态以 [GitHub Actions](https://github.com/leekj666666/ucloud/actions) 的对应提交记录为准。
 
 原计划保存在 `docs/plans`，依赖由 `uv.lock` 固定；HolmesGPT 版本及许可证见 `docs/HOLMESGPT-COMMIT.txt` 和 `docs/HOLMESGPT-LICENSE`。凭据、模型调用原始记录和故障评测数据不上传源码仓库。D4 用户审批与界面、D5 统计对比与消融、D6 新环境复现按原阶段推进。
