@@ -41,7 +41,7 @@ jobs:
           python - <<'PY'
           import xml.etree.ElementTree as ET
           cases = list(ET.parse('ci-evidence/pytest.xml').getroot().iter('testcase'))
-          assert len(cases) >= 21, 'D1 baseline requires at least 21 tests'
+          assert len(cases) >= 50, 'D2 baseline requires at least 50 tests'
           assert all(not any(c.tag in {'skipped', 'failure', 'error'} for c in case) for case in cases), 'Skipped or non-passing tests are not accepted'
           required = {
               'test_postgres_gateway_verification_and_parallel_isolation',
