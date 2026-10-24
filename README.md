@@ -2,7 +2,7 @@
 
 面向线上故障处理的云原生 Agent：从真实告警出发，收集日志、指标、运行状态和发布证据，生成受限修复动作，通过独立业务验证判断是否恢复。
 
-D1、D2 已完成验收；D3 正在补齐最终实机验收与交付。阶段状态与证据见 [D1 报告](docs/D1_COMPLETION_REPORT.md)、[D2 报告](docs/D2_COMPLETION_REPORT.md)、[D3 进度](docs/D3_PROGRESS.md)。未通过的案例不得计入自主恢复。
+D1、D2、D3 已完成对应阶段验收。阶段状态与证据见 [D1 报告](docs/D1_COMPLETION_REPORT.md)、[D2 报告](docs/D2_COMPLETION_REPORT.md)、[D3 报告](docs/D3_COMPLETION_REPORT.md)。未通过的案例不得计入自主恢复。
 
 D3 使用持久化工作流、PostgreSQL 租约、不可变动作意图及写后读回；诊断与执行使用独立身份。仅允许经过健康基线约束的四种动作，不执行模型生成的任意 Shell 命令。业务恢复必须通过完整 120 秒窗口、120 次请求、12 次业务不变量校验及延迟门槛。
 
