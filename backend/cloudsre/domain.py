@@ -12,16 +12,25 @@ class Status(StrEnum):
     EXECUTING = "EXECUTING"
     VERIFYING = "VERIFYING"
     RESOLVED = "RESOLVED"
+    RETRY_WAIT = "RETRY_WAIT"
+    COMPENSATING = "COMPENSATING"
 
 
 ALLOWED = {
     Status.NEW: {Status.INVESTIGATING},
-    Status.INVESTIGATING: {Status.DIAGNOSED, Status.PLAN_READY, Status.ESCALATED},
+    Status.INVESTIGATING: {
+        Status.DIAGNOSED,
+        Status.PLAN_READY,
+        Status.ESCALATED,
+        Status.RETRY_WAIT,
+    },
     Status.DIAGNOSED: set(),
     Status.ESCALATED: set(),
     Status.PLAN_READY: {Status.EXECUTING, Status.ESCALATED},
     Status.EXECUTING: {Status.VERIFYING, Status.ESCALATED},
-    Status.VERIFYING: {Status.RESOLVED, Status.ESCALATED},
+    Status.VERIFYING: {Status.RESOLVED, Status.ESCALATED, Status.COMPENSATING},
+    Status.RETRY_WAIT: {Status.INVESTIGATING, Status.ESCALATED},
+    Status.COMPENSATING: {Status.ESCALATED, Status.VERIFYING},
     Status.RESOLVED: set(),
 }
 

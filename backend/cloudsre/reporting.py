@@ -11,7 +11,16 @@ from .call_ledger import summarize
 
 def versions(root):
     tracked = subprocess.check_output(
-        ["git", "-C", str(root), "ls-files"], text=True
+        [
+            "git",
+            "-C",
+            str(root),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+        text=True,
     ).splitlines()
     hashes = {
         name: hashlib.sha256((root / name).read_bytes()).hexdigest()
@@ -65,9 +74,9 @@ def write_report(folder, journal, software):
         "run_id": journal["run_id"],
         "outcome": journal["outcome"],
         "impact": {
-            "service": "order",
+            "service": journal.get("service", "order"),
             "affected_business_requests": None,
-            "description": "Observed order-path alert; total affected customer requests was not measured.",
+            "description": "Observed business or workload alert; customer impact is not inferred from a resource alert alone.",
         },
         "timeline": journal["events"],
         "phase_seconds": journal.get("phase_seconds", {}),
@@ -86,11 +95,21 @@ def write_report(folder, journal, software):
             "Validate dependency URLs before rollout",
             "Require live business canary before registering a healthy release",
         ],
-        "limitations": [
-            "Single restore_env action and one controlled configuration incident",
-            "No general recovery-rate claim; D3 restart takeover and RBAC remain pending",
-            "Provider cost is unknown without a verified dated tariff",
-        ],
+        "limitations": (
+            [
+                "Bounded actions against verified resource baselines; no arbitrary shell remediation",
+                "This report proves only its incident; aggregate and crash-matrix claims require separate acceptance evidence",
+                "Resource alerts may indicate a blocked rollout while old pods still serve traffic",
+                "Report generated before final state commit; authoritative transition history is the database audit",
+                "Provider cost is unknown without a verified dated tariff",
+            ]
+            if journal.get("schema_version") == 3
+            else [
+                "Single restore_env action and one controlled configuration incident",
+                "No general recovery-rate claim; D3 restart takeover and RBAC remain pending",
+                "Provider cost is unknown without a verified dated tariff",
+            ]
+        ),
         "versions": software,
         "model_accounting": accounting,
     }

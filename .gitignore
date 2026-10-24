@@ -11,3 +11,6 @@ __pycache__/
 evaluation/
 infra/.generated/
 ci-evidence/
+
+# Generated source manifest is embedded in the built image.
+deploy/d3-build-manifest.json

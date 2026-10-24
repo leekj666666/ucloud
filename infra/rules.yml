@@ -4,8 +4,8 @@ groups:
   - alert: OrderErrors
     annotations:
       summary: Order requests are failing
-    expr: sum(rate(sre_http_requests_total{service="order",status=~"5.."}[30s])) >
-      0.1
+    expr: sum by(namespace)(rate(sre_http_requests_total{service="order",status=~"5.."}[30s]))
+      > 0.1
     for: 10s
     labels:
       environment: demo
@@ -14,7 +14,7 @@ groups:
   - alert: DemoTargetDown
     annotations:
       summary: DemoTargetDown
-    expr: up{job="demo"} == 0
+    expr: up{job=~"demo|demo-b"} == 0
     for: 10s
     labels:
       environment: demo
@@ -40,10 +40,27 @@ groups:
   - alert: GatewayErrors
     annotations:
       summary: GatewayErrors
-    expr: sum(rate(sre_http_requests_total{service="gateway",status=~"5.."}[30s]))
+    expr: sum by(namespace)(rate(sre_http_requests_total{service="gateway",status=~"5.."}[30s]))
       > 0.1
     for: 10s
     labels:
       environment: demo
       service: gateway
       severity: warning
+  - alert: WorkloadOOM
+    expr: cloudsre_active_oom == 1
+    for: 10s
+    labels:
+      environment: demo
+      severity: warning
+    annotations:
+      summary: A non-ready business container was OOM killed
+  - alert: BusinessLatencyHigh
+    expr: histogram_quantile(0.95, sum by (le, namespace, service) (rate(sre_http_duration_seconds_bucket{route="/orders"}[1m])))
+      > 1
+    for: 10s
+    labels:
+      environment: demo
+      severity: warning
+    annotations:
+      summary: Business request P95 exceeds one second

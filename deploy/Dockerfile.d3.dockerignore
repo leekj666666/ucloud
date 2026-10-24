@@ -1,0 +1,13 @@
+*
+!pyproject.toml
+!uv.lock
+!backend/
+!backend/**
+!diagnosis/
+!diagnosis/runner_v3.py
+!deploy/
+!deploy/Dockerfile.d3
+!deploy/d3-build-manifest.json
+**/__pycache__/
+**/*.pyc
+**/.env*

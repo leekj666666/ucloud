@@ -17,17 +17,48 @@ scrape_configs:
   static_configs:
   - labels:
       service: order
+      namespace: sre-demo
     targets:
     - sre-dev-control-plane:30080
   - labels:
       service: inventory
+      namespace: sre-demo
     targets:
     - sre-dev-control-plane:30081
   - labels:
       service: gateway
+      namespace: sre-demo
     targets:
     - sre-dev-control-plane:30082
   - labels:
       service: probe
+      namespace: sre-demo
     targets:
     - sre-dev-control-plane:30083
+- job_name: sre-resource-health
+  static_configs:
+  - targets:
+    - cloudsre-diagnosis-d3:8080
+  honor_labels: true
+- job_name: demo-b
+  static_configs:
+  - labels:
+      service: order
+      namespace: sre-demo-b
+    targets:
+    - sre-dev-control-plane:30090
+  - labels:
+      service: inventory
+      namespace: sre-demo-b
+    targets:
+    - sre-dev-control-plane:30091
+  - labels:
+      service: gateway
+      namespace: sre-demo-b
+    targets:
+    - sre-dev-control-plane:30092
+  - labels:
+      service: probe
+      namespace: sre-demo-b
+    targets:
+    - sre-dev-control-plane:30093

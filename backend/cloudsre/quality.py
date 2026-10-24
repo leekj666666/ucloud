@@ -4,6 +4,7 @@ import concurrent.futures
 import hashlib
 import json
 import math
+import os
 import subprocess
 import threading
 import time
@@ -12,8 +13,10 @@ from pathlib import Path
 
 import httpx
 
-VERIFIER = "http://localhost:18084"
-PROM = "http://localhost:19090"
+VERIFIER = os.environ.get("CLOUDSRE_VERIFIER_URL", "http://localhost:18084")
+NAMESPACE = os.environ.get("CLOUDSRE_NAMESPACE", "")
+MONITOR_JOB = os.environ.get("CLOUDSRE_MONITOR_JOB", "demo")
+PROM = os.environ.get("CLOUDSRE_PROM_URL", "http://localhost:19090")
 
 
 def now():
@@ -29,9 +32,13 @@ def request(path):
 def monitor():
     data = {}
     for key, query in {
-        "targets": 'up{job="demo"}',
-        "requests": 'sum by(service,status)(sre_http_requests_total{route="/orders"})',
-        "alerts": 'ALERTS{alertstate="firing"}',
+        "targets": 'up{job="' + MONITOR_JOB + '"}',
+        "requests": 'sum by(service,status)(sre_http_requests_total{route="/orders"'
+        + (',namespace="' + NAMESPACE + '"' if NAMESPACE else "")
+        + "})",
+        "alerts": 'ALERTS{alertstate="firing"'
+        + (',namespace="' + NAMESPACE + '"' if NAMESPACE else "")
+        + "}",
     }.items():
         r = httpx.get(PROM + "/api/v1/query", params={"query": query}, timeout=8)
         r.raise_for_status()
@@ -64,6 +71,12 @@ def alert_keys(data):
 
 
 def resources():
+    snapshot_path = os.environ.get("CLOUDSRE_RESOURCE_SNAPSHOT")
+    if snapshot_path:
+        data = json.loads(Path(snapshot_path).read_text())
+        if time.time() - data["sampled_unix"] > 20:
+            raise RuntimeError("Resource observer snapshot stale")
+        return data
     p = subprocess.run(
         ["docker", "stats", "--no-stream", "--format", "{{json .}}"],
         capture_output=True,

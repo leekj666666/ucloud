@@ -53,5 +53,5 @@ def test_migration_adopts_existing_rows(tmp_path):
     with s.engine.connect() as c:
         assert (
             c.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            == "0003"
+            == "0004"
         )

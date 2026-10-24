@@ -41,7 +41,7 @@ jobs:
           python - <<'PY'
           import xml.etree.ElementTree as ET
           cases = list(ET.parse('ci-evidence/pytest.xml').getroot().iter('testcase'))
-          assert len(cases) >= 50, 'D2 baseline requires at least 50 tests'
+          assert len(cases) >= 91, 'D3 requires at least 91 tests'
           assert all(not any(c.tag in {'skipped', 'failure', 'error'} for c in case) for case in cases), 'Skipped or non-passing tests are not accepted'
           required = {
               'test_postgres_gateway_verification_and_parallel_isolation',
@@ -49,15 +49,29 @@ jobs:
           }
           actual = {case.attrib['name'] for case in cases if 'test_postgres_business' in case.attrib.get('classname', '')}
           assert required <= actual, 'Both real PostgreSQL integration tests must run'
-          print(f'{len(cases)} tests passed, zero skipped; both real PostgreSQL cases verified')
+          durable = {case.attrib['name'] for case in cases if 'test_durable_postgres' in case.attrib.get('classname', '')}
+          assert {
+              'test_same_resource_queues_and_independent_resources_overlap',
+              'test_two_event_checkpoints_run_concurrently',
+              'test_intent_conflict_rolls_back_state_journal_and_audit',
+              'test_released_owner_cannot_commit_and_epoch_increases',
+              'test_killed_worker_releases_lease_and_retains_atomic_intent',
+              'test_server_session_termination_fences_old_connection',
+          } <= durable, 'All real PostgreSQL durable workflow cases must run'
+          print(f'{len(cases)} tests passed, zero skipped; business and durable PostgreSQL cases verified')
           PY
       - run: docker build -t cloudsre-app:ci -f deploy/Dockerfile .
       - run: docker run --rm --entrypoint python cloudsre-app:ci -c "from cloudsre.demo import create_demo; from cloudsre.probe import app"
+      - run: uv run python scripts/build_d3_manifest.py
+      - run: docker build -t cloudsre-agent:ci -f deploy/Dockerfile.d3 .
+      - run: docker run --rm -e CLOUDSRE_DIAG_WORK=/tmp/diagnoses --entrypoint python cloudsre-agent:ci -c "from cloudsre.worker_v3 import process; from cloudsre.diagnosis_jobs import app"
+      - name: Validate OOM and latency alert rules
+        run: docker run --rm --entrypoint /bin/promtool -v "$PWD/infra/rules.yml:/etc/prometheus/rules.yml:ro" -v "$PWD/tests/prometheus_d3.yml:/tests/rules.yml:ro" prom/prometheus@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2 test rules /tests/rules.yml
       - name: Archive test and service evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: d1-ci-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          name: d3-ci-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-evidence/
           if-no-files-found: error
           retention-days: 14
