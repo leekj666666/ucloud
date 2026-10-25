@@ -13,6 +13,13 @@ const folder = path.join('D:/uclaude/d4-browser-runs', runId);
 const linuxFolder = '/mnt/d/uclaude/d4-browser-runs/' + runId;
 fs.mkdirSync(folder, { recursive: true });
 const report = { case: mode, run_id: runId, passed: false, started_at: new Date().toISOString(), actions: [], evaluator_cleanup_used: false };
+const protocolFolder=path.join(folder,'protocol');fs.mkdirSync(protocolFolder);
+const fixtureSource='//wsl.localhost/Ubuntu-24.04/home/lee/sre-project/scripts/d4_fixture.py';
+report.evaluator_source={};
+for(const [name,source] of [['live_acceptance.cjs',__filename],['d4_fixture.py',fixtureSource]]) {
+  const raw=fs.readFileSync(source);fs.writeFileSync(path.join(protocolFolder,name),raw);
+  report.evaluator_source[name]=crypto.createHash('sha256').update(raw).digest('hex');
+}
 function save() { fs.writeFileSync(path.join(folder,'result.json'), JSON.stringify(report,null,2)); }
 function record(name, data={}) { report.actions.push({ name, at: new Date().toISOString(), ...data }); save(); }
 function fixture(operation, scenario='config') {
@@ -34,6 +41,22 @@ async function main() {
   const context=await browser.newContext({viewport:{width:1440,height:980},reducedMotion:'reduce'});
   const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   let incidentId;let injected=false;
+  let pumping=false;let trafficTask=null;let trafficCount=0;
+  function startFaultTraffic() {
+    pumping=true;
+    trafficTask=(async()=>{while(pumping){
+      const sample={at:new Date().toISOString()};
+      try {const response=await context.request.post('http://localhost:18084/sample',{timeout:35000});sample.result=await response.json();}
+      catch(e){sample.error_type=e.name;}
+      fs.appendFileSync(path.join(folder,'fault-traffic.jsonl'),JSON.stringify(sample)+'\n');trafficCount++;
+      if(pumping)await new Promise(resolve=>setTimeout(resolve,1000));
+    }})();
+    record('evaluator_fault_traffic_started');
+  }
+  async function endFaultTraffic() {
+    if(!trafficTask)return;pumping=false;await trafficTask;trafficTask=null;
+    record('evaluator_fault_traffic_drained',{requests:trafficCount});
+  }
   async function login() {
     await page.goto(base);
     await page.getByLabel('控制台访问码',{exact:true}).fill(sensitiveValue);
@@ -54,6 +77,7 @@ async function main() {
     save(); await login();record('login');
     const scenario=mode==='reject'?'route':mode==='stop_investigation'?'dependency':'config';
     fixture('inject',scenario);injected=true;record('real_fault_and_alert_observed');
+    startFaultTraffic();await wait(()=>trafficCount>=3,100);
     await page.getByRole('button',{name:'发起调查',exact:true}).click();
     await page.getByLabel('观察到的问题',{exact:true}).fill('业务请求出现异常，请调查当前服务链路和现场证据');
     requireTrue(await page.getByRole('radio',{name:/逐次人工审批/}).isChecked(),'Manual approval must be default');
@@ -73,6 +97,7 @@ async function main() {
       requireTrue(fixture('inspect').matches_injected,'Task changed fault after investigation stop');
     } else {
       const ready=await phase(['WAITING_APPROVAL']);record('awaiting_bound_approval',{run_id:ready.latest.id,plan_hash:ready.plan_hash});
+      await endFaultTraffic();
       requireTrue(fixture('inspect').matches_injected,'Mutation occurred before approval');
       report.waiting=ready;save();
       if(mode==='approve') {
@@ -137,6 +162,7 @@ async function main() {
       }} catch { cp.spawnSync('wsl.exe',['-d','Ubuntu-24.04','--','docker','stop','cloudsre-worker-d4-1','cloudsre-worker-d4-2'],{encoding:'utf8',timeout:45000});report.evaluator_force_stopped_workers=true; }
     }
   } finally {
+    await endFaultTraffic();
     if(injected) { try { const cleanup=fixture('cleanup');report.evaluator_cleanup_used=cleanup.evaluator_cleanup_used; } catch(e) { report.cleanup_error=String(e.message).replaceAll(sensitiveValue,'[REDACTED]');report.passed=false; } }
     report.ended_at=new Date().toISOString();save();await context.close();await browser.close();
     console.log(JSON.stringify({run_id:runId,passed:report.passed,evaluator_cleanup_used:report.evaluator_cleanup_used,error:report.error,folder}));

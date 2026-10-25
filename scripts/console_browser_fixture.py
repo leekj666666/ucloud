@@ -70,7 +70,7 @@ def seed(folder):
             store.transition(ident, old, new)
         (folder / run_id / "evidence").mkdir(parents=True)
         evidence = {
-            "id": "e-" + uuid.uuid4().hex[:8],
+            "id": "e-" + uuid.uuid4().hex,
             "kind": "logs",
             "sha256": "fixture",
             "content": "<script>window.fixtureXss=1</script> 原始日志文本",

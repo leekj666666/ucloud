@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 async function login(page: Page) {
   await page.goto('/');
@@ -79,6 +80,8 @@ test('untrusted text stays inert and both exports preserve incomplete scope', as
   await openCase(page, '文本与导出测试');
   await page.getByText('查看模型完整判断与排除依据', { exact: true }).click();
   await expect(page.getByText(/仅用于浏览器契约测试的判断/)).toBeVisible();
+  await page.locator('.citation-list button').first().click();
+  await expect(page.locator('.evidence-record .json-view')).toContainText('原始日志文本');
   expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).fixtureXss)).toBeUndefined();
   await page.getByRole('tab', { name: '报告与用量', exact: true }).click();
   await expect(page.getByText('尚未确认恢复', { exact: true })).toBeVisible();
@@ -88,6 +91,10 @@ test('untrusted text stays inert and both exports preserve incomplete scope', as
     const download = await received;
     expect(await download.failure()).toBeNull();
     expect(download.suggestedFilename()).toMatch(/incident-.*\.(json|md)$/);
+    const content = await readFile((await download.path())!, 'utf8');
+    expect(content).toContain('not_verified_recovery');
+    expect(content).not.toContain('browser-contract-access');
+    if (name === '导出 JSON') expect(JSON.parse(content).formal_report.report_status).toBe('incomplete');
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });
