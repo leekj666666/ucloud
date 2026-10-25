@@ -12,6 +12,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
+
+from .controls import OperatorStop
 
 VERIFIER = os.environ.get("CLOUDSRE_VERIFIER_URL", "http://localhost:18084")
 NAMESPACE = os.environ.get("CLOUDSRE_NAMESPACE", "")
@@ -68,6 +71,22 @@ def alert_keys(data):
             in {"gateway", "order", "inventory", "business-probe"}
         )
     }
+
+
+class RecoveryReadiness:
+    """Keep delayed firing/recovery alerts outside the formal verification window."""
+
+    def __init__(self, stable_seconds=15):
+        self.stable_seconds = stable_seconds
+        self.since = None
+
+    def observe(self, business_passed, monitoring, timestamp):
+        if not business_passed or monitoring is None or alert_keys(monitoring):
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = timestamp
+        return timestamp - self.since >= self.stable_seconds
 
 
 def resources():
@@ -156,7 +175,7 @@ def evaluate(
     }
 
 
-def run_window(folder, baseline=None, seconds=120):
+def run_window(folder, baseline=None, seconds=120, stop_check=None):
     if seconds != 120:
         raise ValueError("D2 formal acceptance window is fixed at 120 seconds")
     folder = Path(folder)
@@ -193,9 +212,12 @@ def run_window(folder, baseline=None, seconds=120):
             output.write(json.dumps(entry) + "\n")
             output.flush()
 
+    interruption = None
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
             for tick in range(seconds):
+                if stop_check:
+                    stop_check()
                 scheduled = started + tick
                 time.sleep(max(0, scheduled - time.monotonic()))
                 pool.submit(
@@ -213,6 +235,18 @@ def run_window(folder, baseline=None, seconds=120):
                 if tick % 5 == 0:
                     pool.submit(collect, "monitor", tick // 5, scheduled, monitor)
             time.sleep(max(0, started + seconds - time.monotonic()))
+    except (
+        OperatorStop,
+        RuntimeError,
+        ValueError,
+        OSError,
+        KeyError,
+        TypeError,
+        SQLAlchemyError,
+        httpx.HTTPError,
+        subprocess.SubprocessError,
+    ) as exc:
+        interruption = exc
     finally:
         output.close()
     duration = time.monotonic() - started
@@ -268,5 +302,13 @@ def run_window(folder, baseline=None, seconds=120):
             "network_path": "Docker -> NodePort -> Kubernetes Service -> gateway",
         }
     )
+    if interruption:
+        result.update(
+            passed=False,
+            interrupted=True,
+            interruption_type=type(interruption).__name__,
+        )
     (folder / "result.json").write_text(json.dumps(result, indent=2))
+    if interruption:
+        raise interruption
     return result

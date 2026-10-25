@@ -4,8 +4,10 @@ import hmac
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -18,7 +20,9 @@ from .policy_v3 import parse
 
 ROOT = Path(os.environ.get("CLOUDSRE_DIAG_WORK", "/work"))
 ROOT.mkdir(parents=True, exist_ok=True)
-LOCK = threading.Lock()
+LOCK = threading.RLock()
+PROCESSES = {}
+CANCELLATIONS = set()
 POOL = ThreadPoolExecutor(max_workers=2)
 app = FastAPI(title="Read-only diagnostic jobs")
 
@@ -58,28 +62,43 @@ def execute(folder):
         timeout_seconds = int(os.environ.get("CLOUDSRE_DIAG_TIMEOUT_SECONDS", "180"))
         if not 1 <= timeout_seconds <= 180:
             raise ValueError("Diagnostic timeout must be within 1..180 seconds")
-        try:
-            p = subprocess.run(
+        with LOCK:
+            if status["id"] in CANCELLATIONS:
+                write(
+                    folder / "status.json",
+                    {**status, "state": "cancelled", "ended_at": now()},
+                )
+                return
+            p = subprocess.Popen(
                 [
                     os.environ["CLOUDSRE_HOLMES_PYTHON"],
-                    "/app/diagnosis/runner_v3.py",
+                    os.environ.get(
+                        "CLOUDSRE_DIAGNOSTIC_RUNNER", "/app/diagnosis/runner_v3.py"
+                    ),
                     str(folder),
                 ],
                 env=env,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout_seconds,
-                check=False,
+                start_new_session=True,
             )
-            output = p.stdout + "\n" + p.stderr
+            PROCESSES[status["id"]] = p
+        try:
+            stdout, stderr = p.communicate(timeout=timeout_seconds)
             state = (
                 "complete"
                 if p.returncode == 0 and (folder / "holmes-result.json").exists()
                 else "failed"
             )
-        except subprocess.TimeoutExpired as exc:
-            output = str(exc.stdout or "") + "\n" + str(exc.stderr or "")
+        except subprocess.TimeoutExpired:
+            terminate_group(p)
+            stdout, stderr = p.communicate()
             state = "timeout"
+        output = stdout + "\n" + stderr
+        with LOCK:
+            if status["id"] in CANCELLATIONS:
+                state = "cancelled"
         validation = {}
         if state == "complete":
             try:
@@ -93,20 +112,39 @@ def execute(folder):
                     + ": return one JSON object using the documented action-specific scalar/object value type",
                 }
         (folder / "process.log").write_text(output.replace(key, "[REDACTED]"))
-        write(
-            folder / "status.json",
-            {**status, **validation, "state": state, "ended_at": now()},
-        )
+        with LOCK:
+            if status["id"] in CANCELLATIONS:
+                state = "cancelled"
+            write(
+                folder / "status.json",
+                {**status, **validation, "state": state, "ended_at": now()},
+            )
+            PROCESSES.pop(status["id"], None)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
-        write(
-            folder / "status.json",
-            {
-                **status,
-                "state": "failed",
-                "error_type": type(exc).__name__,
-                "ended_at": now(),
-            },
-        )
+        with LOCK:
+            write(
+                folder / "status.json",
+                {
+                    **status,
+                    "state": "cancelled" if status["id"] in CANCELLATIONS else "failed",
+                    "error_type": type(exc).__name__,
+                    "ended_at": now(),
+                },
+            )
+
+    finally:
+        with LOCK:
+            process = PROCESSES.pop(status["id"], None)
+        if process is not None and process.poll() is None:
+            terminate_group(process)
+            process.wait(timeout=5)
+
+
+def terminate_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 # Restarted service must not pretend an orphaned process is still making progress.
@@ -155,6 +193,46 @@ def get(ident: str, x_diagnostic_token: str | None = Header(default=None)):
     if not path.exists():
         raise HTTPException(404, "Unknown job")
     return json.loads(path.read_text())
+
+
+@app.post("/jobs/{ident}/cancel")
+def cancel(ident: str, x_diagnostic_token: str | None = Header(default=None)):
+    authenticate(x_diagnostic_token)
+    folder = directory(ident)
+    with LOCK:
+        CANCELLATIONS.add(ident)
+        if not (folder / "status.json").exists():
+            # Tombstone fences a delayed create request with this same job ID.
+            folder.mkdir(exist_ok=True)
+            state = {
+                "id": ident,
+                "request_hash": None,
+                "state": "cancelled",
+                "started_at": None,
+                "ended_at": now(),
+                "reason": "cancelled_before_submission",
+            }
+            write(folder / "status.json", state)
+            return state
+        state = json.loads((folder / "status.json").read_text())
+        if state["state"] not in {"running", "cancelling"}:
+            return state
+        process = PROCESSES.get(ident)
+        if process is None:
+            write(
+                folder / "status.json",
+                {**state, "state": "cancelled", "ended_at": now()},
+            )
+        else:
+            write(folder / "status.json", {**state, "state": "cancelling"})
+            terminate_group(process)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        state = json.loads((folder / "status.json").read_text())
+        if state["state"] not in {"running", "cancelling"}:
+            return state
+        time.sleep(0.05)
+    return state
 
 
 @app.get("/health")

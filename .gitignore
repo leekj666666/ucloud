@@ -14,3 +14,11 @@ ci-evidence/
 
 # Generated source manifest is embedded in the built image.
 deploy/d3-build-manifest.json
+
+# D4 generated UI and browser evidence
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+.impeccable/review/
+.impeccable/mocks/
+.impeccable/config.local.json

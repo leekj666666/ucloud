@@ -60,7 +60,7 @@ services:
     - ./grafana-provisioning:/etc/grafana/provisioning:ro
     mem_limit: 256m
   incident-api:
-    image: cloudsre-agent:d3
+    image: cloudsre-agent:d4
     command:
     - uvicorn
     - cloudsre.serve:app

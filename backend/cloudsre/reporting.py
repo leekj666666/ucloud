@@ -25,7 +25,20 @@ def versions(root):
     hashes = {
         name: hashlib.sha256((root / name).read_bytes()).hexdigest()
         for name in tracked
-        if name.endswith((".py", ".yaml", ".yml", ".toml", ".lock"))
+        if name.endswith(
+            (
+                ".py",
+                ".yaml",
+                ".yml",
+                ".toml",
+                ".lock",
+                ".ts",
+                ".tsx",
+                ".css",
+                ".html",
+                ".json",
+            )
+        )
     }
     # Include new modules before their first commit.
     for parent in ("backend", "diagnosis"):

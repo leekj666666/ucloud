@@ -7,7 +7,7 @@ from .domain import IncidentInput
 from .store import Store
 
 
-def create_app(database_url):
+def create_app(database_url, *, console_token=None, evidence_roots=(), static_dir=None):
     store = Store(database_url)
 
     @asynccontextmanager
@@ -24,7 +24,7 @@ def create_app(database_url):
 
         with store.engine.connect() as c:
             c.execute(text("SELECT 1"))
-        return {"status": "ok", "stage": "D2"}
+        return {"status": "ok", "stage": "D4"}
 
     @app.get("/incidents")
     def listing():
@@ -61,5 +61,28 @@ def create_app(database_url):
         if not store.get(ident):
             raise HTTPException(404, "Incident not found")
         return store.runs(ident)
+
+    from .console_api import install
+
+    install(app, store, token=console_token, evidence_roots=evidence_roots)
+    if static_dir:
+        from pathlib import Path
+
+        from fastapi.responses import FileResponse
+        from fastapi.staticfiles import StaticFiles
+
+        dist = Path(static_dir)
+        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+        @app.get("/", include_in_schema=False)
+        def console_index():
+            return FileResponse(
+                dist / "index.html",
+                headers={
+                    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'",
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-cache",
+                },
+            )
 
     return app

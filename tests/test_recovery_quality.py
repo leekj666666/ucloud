@@ -144,3 +144,47 @@ def test_healthy_endpoint_but_failed_window_never_resolves(monkeypatch, tmp_path
     assert store.get(row["id"])["status"] == "ESCALATED"
     assert result["outcome"] == "needs_human"
     assert "RESOLVED" not in [e["phase"] for e in result["events"]]
+
+
+def test_operator_stop_preserves_partial_window_and_never_passes(tmp_path):
+    import json
+
+    from cloudsre.controls import OperatorStop
+    from cloudsre.quality import run_window
+
+    def stop():
+        raise OperatorStop("operator stopped before first scheduled request")
+
+    with pytest.raises(OperatorStop):
+        run_window(tmp_path, stop_check=stop)
+    result = json.loads((tmp_path / "result.json").read_text())
+    assert result["passed"] is False and result["interrupted"] is True
+    assert result["load_requests"] == 0 and result["business_checks"] == 0
+    assert result["duration_seconds"] < 120
+
+
+def test_recovery_readiness_resets_on_delayed_alert_and_business_failure():
+    from cloudsre.quality import RecoveryReadiness
+
+    gate = RecoveryReadiness()
+    clear = {"alerts": []}
+    delayed = {
+        "alerts": [
+            {
+                "metric": {
+                    "alertname": "OrderErrors",
+                    "severity": "warning",
+                    "service": "order",
+                }
+            }
+        ]
+    }
+    assert not gate.observe(True, clear, 0)
+    assert not gate.observe(True, delayed, 14)
+    assert not gate.observe(True, clear, 20)
+    assert not gate.observe(False, clear, 34)
+    assert not gate.observe(True, clear, 40)
+    assert not gate.observe(True, None, 54)
+    assert not gate.observe(True, clear, 60)
+    assert not gate.observe(True, clear, 74)
+    assert gate.observe(True, clear, 75)

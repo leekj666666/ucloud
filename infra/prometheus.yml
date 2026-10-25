@@ -38,7 +38,7 @@ scrape_configs:
 - job_name: sre-resource-health
   static_configs:
   - targets:
-    - cloudsre-diagnosis-d3:8080
+    - cloudsre-diagnosis-d4:8080
   honor_labels: true
 - job_name: demo-b
   static_configs:

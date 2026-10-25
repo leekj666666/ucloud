@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from urllib.parse import quote
@@ -13,5 +14,8 @@ app = create_app(
         "postgresql+psycopg://sre:"
         + quote(cfg["POSTGRES_PASSWORD"], safe="")
         + "@localhost:15432/sre"
-    )
+    ),
+    console_token=os.environ.get("CLOUDSRE_CONSOLE_TOKEN"),
+    evidence_roots=json.loads(os.environ.get("CLOUDSRE_CONSOLE_EVIDENCE_ROOTS", "[]")),
+    static_dir=os.environ.get("CLOUDSRE_UI_DIR"),
 )

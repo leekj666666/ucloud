@@ -1,0 +1,14 @@
+**
+!pyproject.toml
+!uv.lock
+!backend/
+!backend/**
+!diagnosis/
+!diagnosis/runner_v3.py
+!deploy/
+!deploy/d3-build-manifest.json
+!frontend/
+!frontend/dist/
+!frontend/dist/**
+**/__pycache__
+**/*.pyc

@@ -12,8 +12,9 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
 from . import quality as quality_module
-from .actions import classify, reconcile_and_apply
+from .actions import classify, reconcile_and_apply, snapshot
 from .call_ledger import summarize
+from .controls import Controls, OperatorStop
 from .durable import DurableStore, LeaseLost, digest, now
 from .kube_gateway import KubeGateway
 from .policy_v3 import authorize, parse
@@ -21,7 +22,7 @@ from .quality import monitor, request, run_window
 from .reporting import write_report
 from .store import Store
 
-TERMINAL = {"RESOLVED", "ESCALATED", "DIAGNOSED"}
+TERMINAL = {"RESOLVED", "ESCALATED", "DIAGNOSED", "CANCELLED", "REJECTED"}
 STATE = Path(os.environ.get("CLOUDSRE_STATE_DIR", "evaluation/d3-state"))
 
 
@@ -30,6 +31,10 @@ class RetryableExecutionError(RuntimeError):
 
 
 def namespace_for(store, row):
+    if os.environ.get("CLOUDSRE_OPERATOR_CONTROL") == "1":
+        control = Controls(store).get(row["id"])
+        if control:
+            return control["namespace"]
     namespaces = {
         r["payload"]["labels"].get("namespace", "sre-demo")
         for r in store.receipts(row["id"])
@@ -46,6 +51,18 @@ def eligible(store, row):
         "inventory",
     }:
         return False
+    if os.environ.get("CLOUDSRE_OPERATOR_CONTROL") == "1":
+        controls = Controls(store)
+        control = controls.get(row["id"])
+        if not control:
+            return False
+        existing = store.runs(row["id"])
+        if row["status"] == "WAITING_APPROVAL" and existing:
+            intent = existing[-1]["payload"].get("action_intent", {})
+            return bool(
+                control["stop_requested_at"] or controls.decision(intent.get("id", ""))
+            )
+        return row["status"] == "NEW" or bool(existing)
     cutoff = os.environ.get("CLOUDSRE_INCIDENT_NOT_BEFORE")
     if cutoff and row["created_at"] < cutoff:
         return False
@@ -159,8 +176,28 @@ def process(store, row, lease, baseline, software):
             lease.check()
             time.sleep(0.2)
 
+    controls = (
+        Controls(store) if os.environ.get("CLOUDSRE_OPERATOR_CONTROL") == "1" else None
+    )
+
+    def operator_check():
+        lease.check()
+        if controls:
+            controls.check(ident)
+
+    def finish(target, outcome, *, terminal_action_result=None, **values):
+        journal.update(outcome=outcome, **values)
+        journal["usage"] = collect_diagnoses(journal, folder)
+        report = write_report(folder, journal, software)
+        checkpoint(
+            target,
+            result=terminal_action_result,
+            report={"path": report["path"], "sha256": report["sha256"]},
+        )
+
     gateway = KubeGateway("execute")
     try:
+        operator_check()
         checkpoint("INVESTIGATING" if phase == "NEW" else phase, resumed=bool(old))
         if journal.get("baseline_hash", digest(baseline)) != digest(baseline):
             raise ValueError("Trusted baseline changed during incident")
@@ -203,6 +240,7 @@ def process(store, row, lease, baseline, software):
                 }
                 if attempt.get("feedback"):
                     incident["previous_output_error"] = attempt["feedback"]
+                operator_check()
                 barrier("before_diagnosis")
                 response = httpx.post(
                     endpoint, json={"incident": incident}, headers=headers, timeout=15
@@ -210,7 +248,7 @@ def process(store, row, lease, baseline, software):
                 response.raise_for_status()
                 end = time.monotonic() + 195
                 while time.monotonic() < end:
-                    lease.check()
+                    operator_check()
                     r = httpx.get(endpoint, headers=headers, timeout=10)
                     r.raise_for_status()
                     status = r.json()
@@ -231,8 +269,10 @@ def process(store, row, lease, baseline, software):
                     resume_phase="INVESTIGATING",
                     retry_after=(datetime.now(UTC) + timedelta(seconds=10)).isoformat(),
                 )
-                time.sleep(10)
-                lease.check()
+                for _ in range(10):
+                    operator_check()
+                    time.sleep(1)
+                operator_check()
                 checkpoint("INVESTIGATING", retry_after=None)
             source = Path(os.environ["CLOUDSRE_DIAG_RESULTS"]) / attempt["id"]
             raw = json.loads((source / "holmes-result.json").read_text())
@@ -250,6 +290,40 @@ def process(store, row, lease, baseline, software):
             intent = authorize(proposal, evidence, current, baseline, namespace)
             checkpoint("PLAN_READY", intent=intent, action_intent=intent)
         intent = journal["action_intent"]
+        if phase == "PLAN_READY" and controls:
+            control = controls.check(ident)
+            if control["execution_mode"] == "manual":
+                checkpoint(
+                    "WAITING_APPROVAL",
+                    outcome="awaiting_approval",
+                    plan_hash=digest(intent),
+                )
+        if phase == "WAITING_APPROVAL":
+            operator_check()
+            decision = controls.decision(intent["id"]) if controls else None
+            if not decision:
+                return journal
+            if (
+                decision["incident_id"],
+                decision["run_id"],
+                decision["intent_hash"],
+            ) != (ident, run_id, digest(intent)):
+                raise ValueError("Approval does not bind the current immutable action")
+            journal["operator_decision"] = decision
+            if decision["decision"] == "reject":
+                finish(
+                    "REJECTED",
+                    "rejected_by_operator",
+                    rejection_reason=decision["reason"],
+                )
+                return journal
+            if decision["decision"] != "approve":
+                raise ValueError("Unknown approval decision")
+            if any(r["status"] == "resolved" for r in store.receipts(ident)):
+                raise ValueError(
+                    "Alert resolved while awaiting approval; stale action refused"
+                )
+            checkpoint("EXECUTING", intent=intent, outcome="running")
         if phase == "PLAN_READY":
             barrier("after_diagnosis")
             if any(r["status"] == "resolved" for r in store.receipts(ident)):
@@ -268,22 +342,32 @@ def process(store, row, lease, baseline, software):
 
             def send_patch(resource, patch):
                 ledger = folder / "external-actions.jsonl"
-                with ledger.open("a") as stream:
-                    stream.write(
-                        json.dumps(
-                            {
-                                "at": now(),
-                                "action_id": intent["id"],
-                                "event": "request_started",
-                                "epoch": lease.epoch,
-                                "patch_sha256": digest(patch),
-                            }
+
+                def perform():
+                    lease.check()
+                    with ledger.open("a") as stream:
+                        stream.write(
+                            json.dumps(
+                                {
+                                    "at": now(),
+                                    "action_id": intent["id"],
+                                    "event": "request_started",
+                                    "epoch": lease.epoch,
+                                    "patch_sha256": digest(patch),
+                                }
+                            )
+                            + "\n"
                         )
-                        + "\n"
-                    )
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                result = gateway.patch(resource, patch)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    return gateway.patch(resource, patch)
+
+                if controls:
+                    with controls.dispatch_guard(ident, intent, run_id):
+                        operator_check()
+                        result = perform()
+                else:
+                    result = perform()
                 with ledger.open("a") as stream:
                     stream.write(
                         json.dumps(
@@ -304,7 +388,7 @@ def process(store, row, lease, baseline, software):
                 result = reconcile_and_apply(
                     intent, gateway.read, send_patch, lease.check, dispatch
                 )
-            except (LeaseLost, SQLAlchemyError, RetryableExecutionError):
+            except (LeaseLost, SQLAlchemyError, RetryableExecutionError, OperatorStop):
                 raise
             except (RuntimeError, OSError) as exc:
                 attempts = journal.get("execution_reconciliation_errors", 0) + 1
@@ -337,11 +421,16 @@ def process(store, row, lease, baseline, software):
             if classify(intent, gateway.read(intent["resource"])) != "APPLIED":
                 raise RuntimeError("Repair changed before recovery verification")
             end = time.monotonic() + 120
+            from .quality import RecoveryReadiness
+
+            readiness_gate = RecoveryReadiness() if controls else None
             while time.monotonic() < end:
+                operator_check()
                 sample = request("/verify")
                 journal.setdefault("warmup", []).append({"at": now(), "result": sample})
                 checkpoint()
                 monitoring_ready = False
+                readiness = None
                 try:
                     readiness = monitor()
                     journal["warmup"][-1]["monitoring"] = readiness
@@ -349,7 +438,14 @@ def process(store, row, lease, baseline, software):
                 except (RuntimeError, ValueError, OSError, httpx.HTTPError) as exc:
                     journal["warmup"][-1]["monitoring_error"] = type(exc).__name__
                 checkpoint()
-                if sample.get("passed") and monitoring_ready:
+                ready = sample.get("passed") and monitoring_ready
+                if readiness_gate:
+                    ready = readiness_gate.observe(
+                        sample.get("passed") is True, readiness, time.monotonic()
+                    )
+                    journal["warmup"][-1]["continuous_alert_free_ready"] = ready
+                    checkpoint()
+                if ready:
                     break
                 time.sleep(2)
             else:
@@ -361,9 +457,10 @@ def process(store, row, lease, baseline, software):
                 baseline.get("quality_by_namespace", {}).get(
                     namespace, baseline["quality"]
                 ),
+                stop_check=operator_check if controls else None,
             )
             journal["quality"] = quality
-            lease.check()
+            operator_check()
             if not quality["passed"]:
                 raise RuntimeError("Recovery quality gates failed")
             if classify(intent, gateway.read(intent["resource"])) != "APPLIED":
@@ -371,9 +468,85 @@ def process(store, row, lease, baseline, software):
             journal["usage"] = collect_diagnoses(journal, folder)
             journal["outcome"] = "agent_restored_and_verified"
             report = write_report(folder, journal, software)
-            checkpoint(
-                "RESOLVED", report={"path": report["path"], "sha256": report["sha256"]}
+            if controls:
+                with controls.checkpoint_guard(ident):
+                    checkpoint(
+                        "RESOLVED",
+                        report={"path": report["path"], "sha256": report["sha256"]},
+                    )
+            else:
+                checkpoint(
+                    "RESOLVED",
+                    report={"path": report["path"], "sha256": report["sha256"]},
+                )
+    except OperatorStop as exc:
+        # Stop the actual diagnostic process group before acknowledging cancellation.
+        journal["operator_stop"] = controls.get(ident)
+        pending = journal.get("diagnoses", [])
+        if pending and pending[-1].get("state") in {"prepared", "running"}:
+            aid = pending[-1]["id"]
+            response = httpx.post(
+                os.environ["CLOUDSRE_DIAG_URL"] + "/jobs/" + aid + "/cancel",
+                headers={"X-Diagnostic-Token": os.environ["CLOUDSRE_DIAG_TOKEN"]},
+                timeout=15,
             )
+            response.raise_for_status()
+            pending[-1].update(response.json())
+            if pending[-1].get("state") in {"running", "cancelling"}:
+                raise RetryableExecutionError(
+                    "Diagnostic cancellation not yet acknowledged"
+                ) from exc
+        recovery = (
+            folder
+            / ("recovery-" + str(journal.get("verification_attempts", 0)))
+            / "result.json"
+        )
+        if recovery.exists():
+            journal["quality"] = json.loads(recovery.read_text())
+        action = journal.get("action_intent")
+        stopped_result = None
+        if action and phase in {"EXECUTING", "VERIFYING"}:
+            try:
+                current_after_stop = gateway.read(action["resource"])
+                observed = classify(action, current_after_stop)
+            except (RuntimeError, OSError):
+                observed = "UNKNOWN"
+            journal["stop_action_observation"] = observed
+            if observed in {"UNKNOWN", "CONFLICT"}:
+                finish(
+                    "ESCALATED",
+                    "needs_human",
+                    error="Operator stopped task; in-flight action requires reconciliation",
+                    ticket={
+                        "id": "ticket-" + ident,
+                        "status": "OPEN",
+                        "reason": "Stopped with unknown or conflicting action outcome",
+                        "created_at": now(),
+                    },
+                )
+                return journal
+            old_action = lease.action(action["id"])
+            if old_action["state"] not in {
+                "APPLIED",
+                "CONFLICT",
+                "REJECTED",
+                "COMPENSATED",
+            }:
+                stopped_result = {
+                    "id": action["id"],
+                    "state": "APPLIED" if observed == "APPLIED" else "REJECTED",
+                    "after": snapshot(current_after_stop),
+                    "reconciled": True,
+                    "reason": "operator_stop_readback",
+                }
+                journal["action_result"] = stopped_result
+        finish(
+            "CANCELLED",
+            "cancelled_by_operator",
+            terminal_action_result=stopped_result,
+            stop_reason=str(exc),
+            cancellation_note="No new writes will start. An already-applied action is retained; cancellation is not rollback or verified recovery.",
+        )
     except (LeaseLost, SQLAlchemyError, RetryableExecutionError):
         # Do not invent a terminal result when the authoritative database cannot commit.
         raise
@@ -415,10 +588,20 @@ def main():
     baseline = json.loads(Path(os.environ["CLOUDSRE_TRUSTED_BASELINE"]).read_text())
     software = json.loads(Path(os.environ["CLOUDSRE_VERSION_MANIFEST"]).read_text())
     STATE.mkdir(parents=True, exist_ok=True)
-    print("D3 worker ready", flush=True)
+    print(
+        "Operator-controlled worker ready"
+        if os.environ.get("CLOUDSRE_OPERATOR_CONTROL") == "1"
+        else "D3 worker ready",
+        flush=True,
+    )
     while True:
         try:
-            for row in reversed(store.list()):
+            candidates = (
+                Controls(store).pending()
+                if os.environ.get("CLOUDSRE_OPERATOR_CONTROL") == "1"
+                else list(reversed(store.list()))
+            )
+            for row in candidates:
                 if not eligible(store, row):
                     continue
                 namespace = namespace_for(store, row)
