@@ -33,7 +33,7 @@ jobs:
           python-version: '3.12'
       - run: pip install uv==0.13.5
       - run: uv sync --frozen
-      - run: uv run ruff check backend tests scripts diagnosis
+      - run: uv run ruff check backend tests scripts diagnosis benchmarks
       - name: Test with real PostgreSQL and retain JUnit
         run: uv run pytest tests -q -ra --junitxml=ci-evidence/pytest.xml
       - name: Require complete test execution
@@ -41,7 +41,7 @@ jobs:
           python - <<'PY'
           import xml.etree.ElementTree as ET
           cases = list(ET.parse('ci-evidence/pytest.xml').getroot().iter('testcase'))
-          assert len(cases) >= 113, 'D4 requires at least 113 tests'
+          assert len(cases) >= 175, 'D5 requires the complete D4 regression and budget/protocol/E2E/archive checks'
           assert all(not any(c.tag in {'skipped', 'failure', 'error'} for c in case) for case in cases), 'Skipped or non-passing tests are not accepted'
           required = {
               'test_postgres_gateway_verification_and_parallel_isolation',
@@ -68,6 +68,8 @@ jobs:
           } <= control, 'All five real PostgreSQL operator-control cases must run'
           cancel = [case for case in cases if 'test_diagnostic_cancellation' in case.attrib.get('classname', '')]
           assert len(cancel) == 3, 'All three real process cancellation cases must run'
+          budget = {case.attrib['name'] for case in cases if 'test_model_budget_socket' in case.attrib.get('classname', '')}
+          assert 'test_budget_counts_real_local_upstream_http_and_rejects_concurrent_overflow' in budget, 'The real local HTTP budget/concurrency test must run'
           print(f'{len(cases)} tests passed, zero skipped; business and durable PostgreSQL cases verified')
           PY
       - run: docker build -t cloudsre-app:ci -f deploy/Dockerfile .
@@ -88,6 +90,22 @@ jobs:
       - run: uv run python scripts/build_d3_manifest.py
       - run: docker build -t cloudsre-agent:d4-ci -f deploy/Dockerfile.d4 .
       - run: docker run --rm -e CLOUDSRE_DIAG_WORK=/tmp/diagnoses --entrypoint python cloudsre-agent:d4-ci -c "from pathlib import Path; from cloudsre.worker_v3 import process; from cloudsre.diagnosis_jobs import app; assert Path('/app/frontend/dist/index.html').is_file()"
+      - run: uv run python scripts/build_d5_manifest.py
+      - run: docker build --build-arg BASE_IMAGE=cloudsre-agent:d4-ci -t cloudsre-agent:d5-ci -f deploy/Dockerfile.d5 .
+      - name: Verify D5 diagnostic image excludes evaluator and credentials
+        run: |
+          docker run --rm -i --network none --read-only --tmpfs /tmp:rw,size=16m --cap-drop ALL --security-opt no-new-privileges --entrypoint python cloudsre-agent:d5-ci - <<'PY' | tee ci-evidence/d5-image-isolation.txt
+          from pathlib import Path
+          import os
+          from cloudsre.model_budget import create_proxy
+          from cloudsre.experiment_variants import settings
+          assert settings('B1')['max_provider_attempts'] == 1
+          for name in ('/app/benchmarks', '/app/evaluation', '/app/scripts', '/app/infra/.generated', '/var/run/docker.sock'):
+              assert not Path(name).exists(), name
+          assert not any(os.environ.get(key) for key in ('DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'CLOUDSRE_DIAG_TOKEN', 'DATABASE_URL'))
+          print('D5 image imports and isolation passed')
+          PY
+          python -c "from pathlib import Path; assert 'D5 image imports and isolation passed' in Path('ci-evidence/d5-image-isolation.txt').read_text()"
       - name: Install Chromium for browser contracts
         working-directory: frontend
         run: npx playwright install --with-deps chromium
@@ -108,7 +126,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: d4-ci-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          name: d5-ci-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-evidence/
           if-no-files-found: error
           retention-days: 14

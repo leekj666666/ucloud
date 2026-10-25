@@ -14,6 +14,7 @@ ci-evidence/
 
 # Generated source manifest is embedded in the built image.
 deploy/d3-build-manifest.json
+deploy/d5-build-manifest.json
 
 # D4 generated UI and browser evidence
 frontend/dist/

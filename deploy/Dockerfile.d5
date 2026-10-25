@@ -1,0 +1,6 @@
+ARG BASE_IMAGE=cloudsre-agent:d4
+FROM ${BASE_IMAGE}
+COPY backend /app/backend
+COPY diagnosis/runner_d5.py /app/diagnosis/runner_d5.py
+COPY deploy/d5-build-manifest.json /app/d5-build-manifest.json
+USER 1000:1000

@@ -1,0 +1,9 @@
+**
+!backend/
+!backend/**
+!diagnosis/
+!diagnosis/runner_d5.py
+!deploy/
+!deploy/d5-build-manifest.json
+**/__pycache__
+**/*.pyc
