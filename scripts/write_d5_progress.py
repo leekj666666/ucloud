@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from cloudsre.model_budget import ModelBudget
+from scripts.archive_d5_evidence import public_budgets
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "evaluation/d5-runtime"
@@ -17,7 +17,11 @@ def read_json(path, default=None):
 
 def main():
     captures = read_json(ROOT / "evaluation/d5-private/capture-index.json", {})
-    budget = ModelBudget(WORK / "budget-private/batch.sqlite", 100).summary()
+    ledgers, budget = public_budgets(ROOT)
+    if not budget["all_discovered_ledgers_readable"]:
+        raise RuntimeError("Cannot report incomplete budget ledgers")
+    ceiling = budget["global_total_limit"] if budget["authorization"] else 100
+    followup = read_json(WORK / "followup/state.json", {})
     matrix = read_json(WORK / "matrix/state.json", {})
     trials = [read_json(path) for path in (WORK / "e2e").glob("*/result.json")]
     regression = read_json(WORK / "regression/summary.json", {})
@@ -37,9 +41,21 @@ def main():
             and row.get("scoring_ready") is True
             for row in captures.values()
         ),
-        "authorized_batch_limit": budget["limit"],
+        "authorized_cumulative_limit": ceiling,
+        "active_batch_limit_total": budget["active_batch_limit_total"],
+        "budget_ledgers": {
+            name: {k: row[k] for k in ("limit", "used_slots", "unknown_usage_attempts")}
+            for name, row in ledgers.items()
+        },
+        "unknown_usage_attempts": budget["unknown_usage_attempts"],
+        "followup_status": followup.get("status", "not_started"),
+        "followup_finished_tasks": sum(
+            row.get("status") == "finished"
+            for row in followup.get("tasks", {}).values()
+        ),
+        "followup_planned_tasks": len(followup.get("tasks", {})),
         "used_slots": budget["used_slots"],
-        "remaining_slots": budget["remaining_slots"],
+        "remaining_slots": None if ceiling is None else ceiling - budget["used_slots"],
         "known_total_tokens": budget["known_total_tokens"],
         "cost_amount": None,
         "matrix_status": matrix.get("status", "not_started"),
@@ -61,13 +77,17 @@ def main():
 |---|---|
 | 真实开发样本 | {status["captured_dev"]}/12 |
 | 真实验证样本 | {status["captured_validation"]}/8 |
-| 模型预算 | 已占用 {status["used_slots"]}/100，剩余 {status["remaining_slots"]}；失败和重试计入 |
+| 模型预算 | 累计调用 {status["used_slots"]}；累计上限 {status["authorized_cumulative_limit"] if status["authorized_cumulative_limit"] is not None else "用户已解除"}；失败和重试计入 |
 | 冻结矩阵 | {status["matrix_status"]}，完成 {status["matrix_finished_tasks"]}/{status["matrix_planned_tasks"]} |
+| 后续优化筛选 | {status["followup_status"]}，完成 {status["followup_finished_tasks"]}/{status["followup_planned_tasks"]} |
+| usage 未知调用 | {status["unknown_usage_attempts"]}，仍计入累计预算 |
 | 真实现场 E2E | {status["e2e_trials"]} 次，独立恢复 {status["e2e_recovered"]} 次 |
 | 最新完整回归 | {regression.get("tests", "未运行")} 项；通过={regression.get("passed", False)} |
 | 费用 | 金额未知，保留实际调用和provider usage |
 
 已实现持久预算代理、模型密钥隔离、逐HTTP脱敏轨迹、完整快照/事件冻结、固定随机调度、单次2×2与精确H1增量消融、严格现场评测器及结果汇总。实现状态不等于实验收益。
+
+冻结矩阵完成表示任务均已执行，不代表全部成功；2026-10-29 的两项续跑出现上游传输失败，不能作为模型能力下降的证据。后续优化筛选遇传输失败立即停止进一步付费调度，原始结果不覆盖。
 
 所有主系统与机制实验保留失败和缺失项；不足预算不得删病例或降低验收。真实恢复须根因字段复原、实际有界写入及完整120秒/120请求/12检查。H2检测与反馈再规划分开，H2b尚未实现。
 

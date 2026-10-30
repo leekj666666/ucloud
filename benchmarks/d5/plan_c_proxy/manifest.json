@@ -1,0 +1,7 @@
+{
+  "protocol": "D5-C1",
+  "thinking": "disabled",
+  "source_sha256": "93d64e157ca4173f7cfc7ac83adaf92fa93a606a52481da3899f8aae9aab284a",
+  "candidate_sha256": "9a05482aaec741d27e87015e0b51379e2ce837bfd996dfda99384ec321ac4484",
+  "change": "Force thinking disabled before reservation hash and trace serialization; preserve original module and image"
+}

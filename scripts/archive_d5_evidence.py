@@ -11,9 +11,11 @@ import hashlib
 import io
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import zipfile
+from collections import Counter
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -264,9 +266,16 @@ def public_budget(database):
         }
     known = []
     for row in rows:
-        row["usage"] = json.loads(row["usage"]) if row["usage"] else None
+        usage = json.loads(row["usage"]) if row["usage"] else None
+        if (
+            not isinstance(usage, dict)
+            or type(usage.get("total_tokens")) is not int
+            or usage["total_tokens"] < 0
+        ):
+            usage = None
+        row["usage"] = usage
         row["generation_settings"] = settings.get(row["id"])
-        if isinstance(row["usage"], dict):
+        if usage is not None:
             known.append(row)
     return {
         "available": True,
@@ -276,14 +285,135 @@ def public_budget(database):
         "remaining_slots": limit - len(rows),
         "known_usage_attempts": len(known),
         "unknown_usage_attempts": len(rows) - len(known),
-        "known_total_tokens": sum(
-            row["usage"].get("total_tokens", 0) or 0 for row in known
-        ),
+        "known_total_tokens": sum(row["usage"]["total_tokens"] for row in known),
+        "total_tokens": sum(row["usage"]["total_tokens"] for row in known)
+        if len(known) == len(rows)
+        else None,
         "cost_amount": None,
         "cost_state": "unknown",
         "attempts": rows,
         "semantics": "Conservative reservations include uncertain interrupted attempts; no budget reset or database write",
     }
+
+
+def public_budgets(root):
+    """Discover real model ledgers; observer denials remain a separate stream."""
+    private = root / "evaluation/d5-runtime/budget-private"
+    ledgers = {}
+    invalid_names = []
+    for database in sorted(private.glob("batch*.sqlite")):
+        if not database.is_file() or database.is_symlink():
+            continue
+        match = re.fullmatch(r"batch([2-9][0-9]*)?\.sqlite", database.name)
+        label = "batch1" if database.name == "batch.sqlite" else database.stem
+        if not match:
+            invalid_names.append(database.name)
+        if label in ledgers:
+            label = database.name
+        try:
+            ledger = public_budget(database)
+        except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+            ledger = {"available": False, "error_type": type(exc).__name__}
+        ledgers[label] = {**ledger, "ledger_filename": database.name}
+    authorizations = []
+    invalid_authorizations = []
+    for path in sorted((root / "evaluation/d5-private").glob("*authorization*.json")):
+        try:
+            raw = path.read_bytes()
+            value = json.loads(raw)
+            approved = datetime.fromisoformat(value.get("approved_at", ""))
+            ceiling = value.get("global_total_limit")
+            valid = (
+                value.get("user_approved") is True
+                and isinstance(value.get("source_reply"), str)
+                and bool(value["source_reply"].strip())
+                and approved.tzinfo is not None
+                and approved <= datetime.now(UTC)
+                and ((type(ceiling) is int and ceiling >= 1)
+                     or (ceiling is None and value.get("cumulative_cap_removed") is True))
+            )
+            if not valid:
+                raise ValueError("Unverified authorization")
+            authorizations.append(
+                (
+                    approved,
+                    {
+                        "path": str(path.relative_to(root)),
+                        "canonical_sha256": sha(raw),
+                        "global_total_limit": ceiling,
+                        "cumulative_cap_removed": value.get("cumulative_cap_removed") is True,
+                        "approved_at": value["approved_at"],
+                    },
+                )
+            )
+        except (OSError, ValueError, TypeError, AttributeError):
+            invalid_authorizations.append(str(path.relative_to(root)))
+    authorization = (
+        max(authorizations, key=lambda row: row[0])[1] if authorizations else None
+    )
+    available = [row for row in ledgers.values() if row.get("available") is True]
+    complete = (
+        bool(ledgers)
+        and len(available) == len(ledgers)
+        and "batch1" in ledgers
+        and not invalid_names
+    )
+    numeric_limits = all(
+        type(row.get("limit")) is int and row["limit"] >= 1 for row in available
+    )
+    total_limit = (
+        sum(row["limit"] for row in available) if complete and numeric_limits else None
+    )
+    per_batch = (
+        complete and numeric_limits and all(row["limit"] <= 100 for row in available)
+    )
+    within_own_cap = per_batch and all(
+        row["used_slots"] <= row["limit"] for row in available
+    )
+    identities = Counter(
+        attempt["id"] for ledger in available for attempt in ledger["attempts"]
+    )
+    duplicates = sorted(key for key, count in identities.items() if count > 1)
+    known_tokens = sum(row["known_total_tokens"] for row in available)
+    known_attempts = sum(row["known_usage_attempts"] for row in available)
+    unknown_attempts = sum(row["unknown_usage_attempts"] for row in available)
+    within_global = bool(
+        authorization
+        and within_own_cap
+        and (authorization.get("cumulative_cap_removed") is True
+             or total_limit <= authorization["global_total_limit"])
+        and not duplicates
+    )
+    aggregate = {
+        "ledger_count": len(ledgers),
+        "all_discovered_ledgers_readable": complete,
+        "used_slots": sum(row["used_slots"] for row in available) if complete else None,
+        "known_ledger_used_slots": sum(row["used_slots"] for row in available),
+        "active_batch_limit_total": total_limit,
+        "each_batch_limit_at_most_100": per_batch,
+        "each_ledger_within_own_cap": within_own_cap,
+        "known_usage_attempts": known_attempts,
+        "unknown_usage_attempts": unknown_attempts if complete else None,
+        "known_total_tokens": known_tokens,
+        "total_tokens": known_tokens if complete and unknown_attempts == 0 else None,
+        "cost_amount": None,
+        "cost_state": "unknown",
+        "authorization": authorization,
+        "global_total_limit": authorization["global_total_limit"]
+        if authorization
+        else None,
+        "authorization_state": "within_supplied_global_authorization"
+        if within_global
+        else "missing_invalid_or_exceeded_authorization",
+        "all_active_batch_caps_within_supplied_global_limit": within_global,
+        "invalid_ledger_names": invalid_names,
+        "duplicate_attempt_ids": duplicates,
+        "invalid_or_unverified_authorization_files": invalid_authorizations,
+        "observer_denials_are_model_calls": False,
+        "observer_semantics": "proxy-denials.sqlite is not a model ledger; its separately exported observed denial summary retains historical totals as null",
+        "scope": "Read-only projection of separate existing ledgers; no authorization, ledger, reset, or model call is created. Missing usage remains unknown",
+    }
+    return ledgers, aggregate
 
 
 def matrix_status(archive, declaration):
@@ -437,10 +567,12 @@ def archive(
                     "excluded_zip_members": members,
                 }
             )
+    ledgers, budget_aggregate = public_budgets(root)
     generated = {
         "metadata/budget-public-summary.json": public_budget(
             runtime / "budget-private/batch.sqlite"
         ),
+        "metadata/model-budgets/aggregate.json": budget_aggregate,
         "metadata/source-version.json": {
             "commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=root, text=True
@@ -451,6 +583,8 @@ def archive(
             "source_selection": "git tracked and nonignored untracked files, with explicit credential/dependency exclusions",
         },
     }
+    for label, summary in ledgers.items():
+        generated["metadata/model-budgets/" + label + ".json"] = summary
     declaration_path = destination / "metadata/supplied-status.json"
     declaration = (
         json.loads(declaration_path.read_text()) if declaration_path.exists() else None

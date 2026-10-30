@@ -139,7 +139,7 @@ def score(case, capture, proposal, records):
     return result
 
 
-def trial(case_id, variant, repeat=0, *, capture_override=None):
+def trial(case_id, variant, repeat=0, *, capture_override=None, budget_override=None):
     from cloudsre.experiment_views import load_records
 
     registry = {row.id: row for row in (*DEV, *VALIDATION)}
@@ -166,7 +166,11 @@ def trial(case_id, variant, repeat=0, *, capture_override=None):
     folder = WORK / "diagnostics" / ident
     folder.mkdir(parents=True)
     (folder / "incident.json").write_bytes((snapshot / "incident.json").read_bytes())
-    budget = ModelBudget(WORK / "budget-private/batch.sqlite", 100)
+    budget = (
+        budget_override
+        if budget_override is not None
+        else ModelBudget(WORK / "budget-private/batch.sqlite", 100)
+    )
     protocol = settings(variant)
     token = budget.register(ident, max(1, protocol["max_provider_attempts"]))
     private = ROOT / "infra/.generated/d5"

@@ -256,3 +256,63 @@ def test_d5_known_values_include_encodings_and_exclude_public_api_base_url(tmp_p
         )[0]
         == b'"token":"[REDACTED]"'
     )
+
+
+def test_multibatch_archive_preserves_unknown_usage_and_global_cap(tmp_path):
+    from datetime import UTC, datetime
+
+    from cloudsre.model_budget import ModelBudget
+
+    root = tmp_path / "repository"
+    folder = root / "evaluation/d5-runtime/budget-private"
+    folder.mkdir(parents=True)
+    for name in ("batch.sqlite", "batch2.sqlite"):
+        budget = ModelBudget(folder / name, 100)
+        token = budget.register(name, 1)
+        attempt = budget.reserve(token, b"{}")
+        budget.finish(attempt, error_type="RemoteProtocolError")
+    approval = {
+        "user_approved": True,
+        "source_reply": "cumulative 400",
+        "global_total_limit": 400,
+        "approved_at": datetime.now(UTC).isoformat(),
+    }
+    write(
+        root / "evaluation/d5-private/batch2-authorization.json", json.dumps(approval)
+    )
+    # Observer DB is not a model ledger and must never increase usage.
+    (folder / "proxy-denials.sqlite").write_bytes(b"not-a-model-ledger")
+    ledgers, aggregate = delivery.public_budgets(root)
+    assert set(ledgers) == {"batch1", "batch2"}
+    assert aggregate["used_slots"] == 2
+    assert aggregate["unknown_usage_attempts"] == 2
+    assert aggregate["total_tokens"] is None
+    assert aggregate["cost_amount"] is None
+    assert aggregate["global_total_limit"] == 400
+    assert aggregate["active_batch_limit_total"] == 200
+    assert aggregate["authorization_state"] == "within_supplied_global_authorization"
+    approval["global_total_limit"] = 100
+    write(
+        root / "evaluation/d5-private/batch2-authorization.json", json.dumps(approval)
+    )
+    _, exceeded = delivery.public_budgets(root)
+    assert (
+        exceeded["authorization_state"] == "missing_invalid_or_exceeded_authorization"
+    )
+
+
+def test_explicit_removed_cumulative_cap_preserves_attempt_accounting(tmp_path):
+    root, _, _ = fake_repository(tmp_path)
+    path = root / "evaluation/d5-private/latest-authorization.json"
+    approval = {"user_approved": True, "source_reply": "Remove cumulative cap", "approved_at": "2026-01-01T00:00:00+00:00", "global_total_limit": None}
+    write(path, json.dumps(approval))
+    _, rejected = delivery.public_budgets(root)
+    assert rejected["authorization_state"] == "missing_invalid_or_exceeded_authorization"
+    approval["cumulative_cap_removed"] = True
+    path.write_text(json.dumps(approval))
+    _, accepted = delivery.public_budgets(root)
+    assert accepted["global_total_limit"] is None
+    assert accepted["authorization_state"] == "within_supplied_global_authorization"
+    assert accepted["used_slots"] == 2
+    assert accepted["unknown_usage_attempts"] == 1
+    assert accepted["each_ledger_within_own_cap"] is True
