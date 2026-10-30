@@ -60,3 +60,34 @@ def test_namespace_restored_after_cross_namespace_failure():
         assert live.KUBE[-1] == "sre-demo-b"
         raise RuntimeError("simulated API failure")
     assert live.KUBE is original
+
+
+def test_baseline_and_model_drift_prevent_opening(monkeypatch, tmp_path):
+    import dotenv
+
+    monkeypatch.setattr(protocol, "ROOT", tmp_path)
+    monkeypatch.setattr(protocol, "PRIVATE", tmp_path)
+    sealed = tmp_path / "sealed"
+    sealed.write_text("{}")
+    monkeypatch.setattr(protocol, "SEALED", sealed)
+    baseline = tmp_path / "infra/.generated/d4/baseline.json"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text("{}")
+    monkeypatch.setattr(protocol, "source_hashes", lambda: {"app": "same"})
+    plan = {
+        "source_hashes": {"app": "same"},
+        "sealed_sha256": protocol.checksum(sealed),
+        "baseline_sha256": "changed",
+        "model": "frozen-model",
+    }
+    (tmp_path / "protocol.json").write_text(json.dumps(plan))
+    with pytest.raises(ValueError, match="baseline changed"):
+        protocol.open_holdout()
+    plan["baseline_sha256"] = protocol.checksum(baseline)
+    (tmp_path / "protocol.json").write_text(json.dumps(plan))
+    monkeypatch.setattr(
+        dotenv, "dotenv_values", lambda *args: {"MODEL_NAME": "different-model"}
+    )
+    with pytest.raises(ValueError, match="model name changed"):
+        protocol.open_holdout()
+    assert not (tmp_path / "opened.json").exists()

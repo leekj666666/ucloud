@@ -104,7 +104,11 @@ elif args.command == "freeze":
     assert worker.get("CLOUDSRE_H2B_ENABLED", "0") != "1"
     image = diagnose.image_provenance()
     model = dotenv_values("/mnt/d/uclaude/model.env")["MODEL_NAME"]
-    plan = freeze(image["image_id"], model)
+    plan = freeze(
+        image["image_id"],
+        model,
+        baseline_sha256=checksum(ROOT / "infra/.generated/d4/baseline.json"),
+    )
     print(
         json.dumps(
             {"frozen": True, "tasks": len(plan["tasks"]), "holdout_opened": False}

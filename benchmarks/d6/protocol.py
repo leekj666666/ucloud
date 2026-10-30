@@ -73,7 +73,7 @@ def create_schedule(seed):
     ]
 
 
-def freeze(image_id, model_name, seed=20261031):
+def freeze(image_id, model_name, seed=20261031, baseline_sha256=None):
     PRIVATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     PRIVATE.chmod(0o700)
     plan = {
@@ -86,6 +86,7 @@ def freeze(image_id, model_name, seed=20261031):
         "sealed_sha256": checksum(SEALED),
         "image_id": image_id,
         "model": model_name,
+        "baseline_sha256": baseline_sha256,
         "default_H2b": False,
         "default_H5": False,
         "thinking": "original provider default enabled",
@@ -123,6 +124,14 @@ def verify_protocol():
         SEALED
     ):
         raise ValueError("Frozen D6 source or sealed configurations changed")
+    if plan.get("baseline_sha256") != checksum(
+        ROOT / "infra/.generated/d4/baseline.json"
+    ):
+        raise ValueError("Frozen trusted baseline changed")
+    from dotenv import dotenv_values
+
+    if dotenv_values("/mnt/d/uclaude/model.env").get("MODEL_NAME") != plan["model"]:
+        raise ValueError("Frozen model name changed")
     return plan
 
 
