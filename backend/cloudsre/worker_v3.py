@@ -16,6 +16,7 @@ from .actions import classify, reconcile_and_apply, snapshot
 from .call_ledger import summarize
 from .controls import Controls, OperatorStop
 from .durable import DurableStore, LeaseLost, digest, now
+from .h2b_feedback import feedback_for_reinvestigation, feedback_for_warmup
 from .kube_gateway import KubeGateway
 from .policy_v3 import authorize, parse
 from .quality import monitor, request, run_window
@@ -195,6 +196,31 @@ def process(store, row, lease, baseline, software):
             report={"path": report["path"], "sha256": report["sha256"]},
         )
 
+    def start_h2b(feedback, intent, verification):
+        if not feedback:
+            return False
+        operator_check()
+        journal.setdefault("h2b_history", []).append(
+            {
+                "action_intent": intent,
+                "action_result": journal.get("action_result"),
+                "verification": verification,
+                "feedback": feedback,
+                "at": now(),
+            }
+        )
+        journal["h2b_rounds"] = 1
+        journal["h2b_feedback"] = feedback
+        journal["h2b_previous_proposal"] = journal["proposal"]
+        journal["diagnoses"].append(
+            {"id": uuid.uuid4().hex, "state": "prepared", "at": now()}
+        )
+        with controls.checkpoint_guard(ident):
+            checkpoint(
+                "INVESTIGATING", outcome="reinvestigating_after_business_failure"
+            )
+        return True
+
     gateway = KubeGateway("execute")
     try:
         operator_check()
@@ -220,7 +246,9 @@ def process(store, row, lease, baseline, software):
                 if not journal["diagnoses"] or journal["diagnoses"][-1].get(
                     "state"
                 ) in {"failed", "timeout", "interrupted"}:
-                    if len(journal["diagnoses"]) >= 2:
+                    if len(journal["diagnoses"]) >= 2 + 2 * journal.get(
+                        "h2b_rounds", 0
+                    ):
                         raise RuntimeError("Diagnostic retry budget exhausted")
                     previous = journal["diagnoses"][-1] if journal["diagnoses"] else {}
                     attempt = {"id": uuid.uuid4().hex, "state": "prepared", "at": now()}
@@ -240,6 +268,8 @@ def process(store, row, lease, baseline, software):
                 }
                 if attempt.get("feedback"):
                     incident["previous_output_error"] = attempt["feedback"]
+                if journal.get("h2b_feedback"):
+                    incident["business_verification_feedback"] = journal["h2b_feedback"]
                 operator_check()
                 barrier("before_diagnosis")
                 response = httpx.post(
@@ -262,7 +292,7 @@ def process(store, row, lease, baseline, software):
                 journal["usage"] = collect_diagnoses(journal, folder)
                 if attempt["state"] == "complete":
                     break
-                if len(journal["diagnoses"]) >= 2:
+                if len(journal["diagnoses"]) >= 2 + 2 * journal.get("h2b_rounds", 0):
                     raise RuntimeError("Diagnostic retry budget exhausted")
                 checkpoint(
                     "RETRY_WAIT",
@@ -278,6 +308,14 @@ def process(store, row, lease, baseline, software):
             raw = json.loads((source / "holmes-result.json").read_text())
             journal["answer"] = raw["result"]
             proposal = parse(raw["result"])
+            previous_plan = journal.get("h2b_previous_proposal")
+            if previous_plan and all(
+                getattr(proposal, k) == previous_plan[k]
+                for k in ("action", "resource", "value")
+            ):
+                raise ValueError(
+                    "Repeated unsuccessful action refused; human review required"
+                )
             journal["proposal"] = proposal.model_dump()
             evidence = [
                 json.loads(p.read_text()) for p in (source / "evidence").glob("*.json")
@@ -449,6 +487,29 @@ def process(store, row, lease, baseline, software):
                     break
                 time.sleep(2)
             else:
+                if (
+                    os.environ.get("CLOUDSRE_H2B_ENABLED") == "1"
+                    and controls
+                    and controls.get(ident)["execution_mode"] == "manual"
+                ):
+                    stable = (
+                        classify(intent, gateway.read(intent["resource"])) == "APPLIED"
+                    )
+                    feedback = feedback_for_warmup(
+                        journal.get("warmup", []),
+                        action_stable=stable,
+                        attempts=journal.get("h2b_rounds", 0),
+                        stopped=False,
+                    )
+                    if start_h2b(
+                        feedback,
+                        intent,
+                        {
+                            "kind": "warmup_timeout",
+                            "samples": journal.get("warmup", [])[-3:],
+                        },
+                    ):
+                        return journal
                 raise RuntimeError("Normal business path did not recover")
             count = journal.get("verification_attempts", 0) + 1
             checkpoint(verification_attempts=count)
@@ -462,6 +523,24 @@ def process(store, row, lease, baseline, software):
             journal["quality"] = quality
             operator_check()
             if not quality["passed"]:
+                if (
+                    os.environ.get("CLOUDSRE_H2B_ENABLED") == "1"
+                    and controls
+                    and controls.get(ident)["execution_mode"] == "manual"
+                ):
+                    stable = (
+                        classify(intent, gateway.read(intent["resource"])) == "APPLIED"
+                    )
+                    feedback = feedback_for_reinvestigation(
+                        quality,
+                        action_stable=stable,
+                        attempts=journal.get("h2b_rounds", 0),
+                        stopped=False,
+                    )
+                    if start_h2b(
+                        feedback, intent, {"kind": "quality_window", "result": quality}
+                    ):
+                        return journal
                 raise RuntimeError("Recovery quality gates failed")
             if classify(intent, gateway.read(intent["resource"])) != "APPLIED":
                 raise RuntimeError("Resource drift during verification")

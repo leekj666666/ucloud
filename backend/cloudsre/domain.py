@@ -34,7 +34,12 @@ ALLOWED = {
     Status.CANCELLED: set(),
     Status.REJECTED: set(),
     Status.EXECUTING: {Status.VERIFYING, Status.ESCALATED},
-    Status.VERIFYING: {Status.RESOLVED, Status.ESCALATED, Status.COMPENSATING},
+    Status.VERIFYING: {
+        Status.RESOLVED,
+        Status.ESCALATED,
+        Status.COMPENSATING,
+        Status.INVESTIGATING,
+    },
     Status.RETRY_WAIT: {Status.INVESTIGATING, Status.ESCALATED},
     Status.COMPENSATING: {Status.ESCALATED, Status.VERIFYING},
     Status.RESOLVED: set(),
