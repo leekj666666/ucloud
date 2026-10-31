@@ -14,6 +14,19 @@ PYTHONPATH=backend .venv/bin/python scripts/quality_d3.py
 
 本地与远端 CI 要求至少 92 项测试、零跳过，包含真实 PostgreSQL 集成测试、镜像构建和告警规则验证。实机故障、并发与进程接管另行验收，不能用单元测试代替。远端状态以 [GitHub Actions](https://github.com/leekj666666/ucloud/actions) 的对应提交记录为准。
 
-原计划保存在 `docs/plans`，依赖由 `uv.lock` 固定；HolmesGPT 版本及许可证见 `docs/HOLMESGPT-COMMIT.txt` 和 `docs/HOLMESGPT-LICENSE`。凭据、模型调用原始记录和故障评测数据不上传源码仓库。D5 统计对比与消融、D6 新环境复现仍属后续阶段。
+原计划保存在 `docs/plans`，依赖由 `uv.lock` 固定；HolmesGPT 版本及许可证见 `docs/HOLMESGPT-COMMIT.txt` 和 `docs/HOLMESGPT-LICENSE`。凭据、模型调用原始记录和故障评测数据不上传源码仓库。D5 原思考模式对照与 H2b/H5 补强已完成相应范围验证，结果及限制见 [D5 结果](docs/D5_RESULTS.md) 和 [H2b 最终结论](docs/H2B_FINAL_DECISION.md)。H2b、H5 保留可选、默认关闭。D6 正在进行冻结留出验证与最终交付，尚未完成。
 
 D4 故障指挥台与阶段验收已完成：[D4 完成报告](docs/D4_COMPLETION_REPORT.md)、[进度与失败披露](docs/D4_PROGRESS.md)、[冻结判据](docs/D4_ACCEPTANCE_PLAN.md)、[启动和演示说明](docs/D4_OPERATIONS.md)。默认逐次人工审批；停止请求与实际确认分开记录。页面使用实际 API/数据库/证据，不提前宣称业务恢复。新 CI 要求至少 113 项后端测试零跳过、5 项真实 PG 控制竞争、3 项真实进程取消、桌面/手机共 12 项浏览器契约与既有构建/告警检查。完整本地检查运行 `PYTHONPATH=backend .venv/bin/python scripts/quality_d4.py`。
+
+## D6 正式验证与交付
+
+冻结产品/评测提交 `c39e242` 的本地与远端后端测试均为 256 项通过、零跳过；远端另有 12 项浏览器契约通过。对应 [CI 证据](https://github.com/leekj666666/ucloud/actions/runs/41144665880) 不代替真实业务恢复与用户试用。
+
+正式对照为 B0 规则、B2 基础 HolmesGPT、B3 当前默认系统，各 20 个留出配置 × 3 次，共 180 项现场试验；B1 另做 60 项快照诊断。已知故障家族内的新干扰上下文不等于全新故障泛化。失败、环境中断和未知用量均保留；未完成前不报告最终提升比例。
+
+- [D6 进度与失败披露](docs/D6_PROGRESS.md)、[冻结执行计划](docs/D6_EXECUTION_PLAN.md)
+- [正式运行与中断恢复](docs/D6_OPERATIONS.md)、[架构、权限与价值边界](docs/D6_ARCHITECTURE.md)
+- [同主机清洁部署说明](docs/D6_CLEANROOM.md)
+- [真实用户试用清单](docs/D6_USER_ACCEPTANCE.md)、[三分钟真实演示脚本](docs/D6_DEMO_SCRIPT.md)
+
+正式评测期间不要在同一业务图上操作生产 worker 或手动注入故障。清洁部署、真实用户试用、视频与最终归档均有独立完成判据，文档准备不等于这些工作已经完成。
