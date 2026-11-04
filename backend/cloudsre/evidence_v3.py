@@ -116,7 +116,7 @@ def collect(kind, folder):
         finally:
             gateway.close()
     if kind == "logs":
-        query = '{namespace="' + namespace + '"} | json | event="inventory_unavailable"'
+        query = '{namespace="' + namespace + '"} | json | event=~"inventory_unavailable|inventory_rejected"'
         r = httpx.get(
             os.environ["CLOUDSRE_LOKI_URL"] + "/loki/api/v1/query_range",
             params={"query": query, "start": since, "limit": 24},

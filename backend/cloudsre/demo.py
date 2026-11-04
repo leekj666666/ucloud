@@ -297,6 +297,8 @@ def create_demo(role, database_url, inventory_url="http://inventory:8000"):
                             log(
                                 "inventory_rejected",
                                 service=role,
+                                upstream=inventory_url,
+                                request_path="/reservations",
                                 status=response.status_code,
                                 trace_id=request.state.trace_id,
                             )

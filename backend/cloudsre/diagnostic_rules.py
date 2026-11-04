@@ -1,5 +1,6 @@
 """Conservative B0/H5 rules over the same observations available to all models."""
 
+from .dependency_symptoms import matches_dependency_failure
 from .experiment_views import KINDS
 
 
@@ -116,11 +117,8 @@ def propose(records, namespace):
             )
             upstream = {"order": "inventory", "gateway": "order"}[name]
             logs = records["logs"]["data"].get("lines", [])
-            log_match = any(
-                current
-                and current in row["line"]
-                and "inventory_unavailable" in row["line"]
-                for row in logs
+            log_match = matches_dependency_failure(
+                [row["line"] for row in logs], current, expected
             )
             if (
                 current

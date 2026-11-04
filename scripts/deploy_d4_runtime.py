@@ -189,7 +189,14 @@ def main():
     diagnostic = {
         k: model[k] for k in ("OPENAI_BASE_URL", "DEEPSEEK_API_KEY", "MODEL_NAME")
     }
+    routing = os.environ.get("CLOUDSRE_ROUTING_MODE", "h5")
+    if routing not in {"h5", "b3"}:
+        raise ValueError("CLOUDSRE_ROUTING_MODE must be h5 or b3")
     diagnostic.update(
+        CLOUDSRE_DIAGNOSTIC_RUNNER=os.environ.get(
+            "CLOUDSRE_DIAGNOSTIC_RUNNER", "/app/diagnosis/runner_h5.py"
+        ),
+        CLOUDSRE_ROUTING_MODE=routing,
         CLOUDSRE_DIAG_TOKEN=diag_token,
         CLOUDSRE_DIAG_WORK="/work",
         CLOUDSRE_READ_KUBECONFIG="/config/read.yaml",

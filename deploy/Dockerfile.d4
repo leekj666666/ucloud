@@ -4,7 +4,7 @@ RUN pip install --no-cache-dir uv==0.13.5
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 COPY backend ./backend
-COPY diagnosis/runner_v3.py ./diagnosis/runner_v3.py
+COPY diagnosis/runner_v3.py diagnosis/runner_common.py diagnosis/runner_h5.py ./diagnosis/
 COPY deploy/d3-build-manifest.json ./build-manifest.json
 COPY frontend/dist ./frontend/dist
 ENV PYTHONPATH=/app/backend PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1 CLOUDSRE_VERSION_MANIFEST=/app/build-manifest.json CLOUDSRE_UI_DIR=/app/frontend/dist

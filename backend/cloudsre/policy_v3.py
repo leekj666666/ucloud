@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .actions import make_intent, snapshot
+from .dependency_symptoms import matches_dependency_failure
 
 
 class Proposal(BaseModel):
@@ -129,9 +130,9 @@ def authorize(plan, evidence, current, baseline, namespace):
             line["line"]
             for e in selected.values()
             if e["kind"] == "logs"
-            for line in e["data"]["lines"]
+            for line in e["data"].get("lines", [])
         ]
-        if not any(field in line and "inventory_unavailable" in line for line in logs):
+        if not matches_dependency_failure(logs, field, plan.value):
             raise ValueError("Matching dependency failure logs required")
         endpoints = [
             s

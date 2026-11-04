@@ -1,7 +1,9 @@
-# 来源与自主工作
+# 自主贡献与开源归属
 
-HolmesGPT 是上游诊断引擎，未将其源码视为自主开发；版本固定于 vendor 中的 commit。上游许可证为 Apache-2.0，分发前保留 LICENSE/NOTICE 并检查依赖。
+HolmesGPT为上游诊断引擎，不属于本项目原创；固定commit见docs/HOLMESGPT-COMMIT.txt，许可证副本见docs/HOLMESGPT-LICENSE。Python/npm依赖按锁文件安装；分发依赖本体时遵循各自许可证并保留适用声明。
 
-自主工作包括事件 API 与幂等持久化、只读工具与 HolmesGPT 进程适配、证据和可信基线约束、受限执行与读回、持久化租约/动作意图、独立业务验证、人工审批/拒绝/停止控制台，以及隔离的真实对照评测。状态编排借鉴 STRATUS 的思路，不将通用工作流思想或上游诊断引擎声称为原创。
+自主工程工作：事件API与幂等状态；持久化工作流、数据库租约与重启接管；精确方案审批/拒绝/停止；UID、资源版本与完整spec前置校验；未知写入结果读回重建；独立订单/库存事务验证；证据ID和哈希绑定；H5规则与模型回退集成；结构化路径故障证据、有上限的日志补采；中文控制台、审计导出与故障评测设施。
 
-D5 的具体增益与负面结果见 [D5 来源和贡献](docs/D5_CONTRIBUTIONS.md)、[H2b 最终结论](docs/H2B_FINAL_DECISION.md)。可选 H2b/H5 均默认关闭；D6 的当前状态和能力边界见 [D6 进度](docs/D6_PROGRESS.md) 与 [架构说明](docs/D6_ARCHITECTURE.md)。尚未完成的实机验证不表述为已证明的创新效果。
+H5规则来自既有B0规则，不包装为新算法。借鉴成熟项目的编排/验证思想，不宣称这些机制均为首次提出。当前工程增益及限制见docs/COMPETITION_TECHNICAL.md及H5验收记录，原始失败保留。
+
+Prometheus、Alertmanager、Loki、Alloy、Kubernetes/kind、PostgreSQL、FastAPI、React等为第三方组件；依赖和版本以锁文件、镜像摘要和上游版本记录为准。未将第三方代码改名作为自主成果。

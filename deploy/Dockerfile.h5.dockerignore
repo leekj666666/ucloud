@@ -1,0 +1,8 @@
+**
+!backend/
+!backend/**
+!diagnosis/
+!diagnosis/**
+!deploy/
+!deploy/Dockerfile.h5
+**/__pycache__

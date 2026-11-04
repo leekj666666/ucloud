@@ -1,0 +1,4 @@
+FROM cloudsre-agent:common-interface-v1
+COPY backend /app/backend
+COPY diagnosis /app/diagnosis
+COPY diagnosis/runner_common.py /app/diagnosis/runner_d5.py

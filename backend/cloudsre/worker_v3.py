@@ -307,6 +307,7 @@ def process(store, row, lease, baseline, software):
             source = Path(os.environ["CLOUDSRE_DIAG_RESULTS"]) / attempt["id"]
             raw = json.loads((source / "holmes-result.json").read_text())
             journal["answer"] = raw["result"]
+            journal["diagnostic_routing"] = raw.get("routing")
             proposal = parse(raw["result"])
             previous_plan = journal.get("h2b_previous_proposal")
             if previous_plan and all(

@@ -5,6 +5,8 @@
 !backend/**
 !diagnosis/
 !diagnosis/runner_v3.py
+!diagnosis/runner_common.py
+!diagnosis/runner_h5.py
 !deploy/
 !deploy/d3-build-manifest.json
 !frontend/

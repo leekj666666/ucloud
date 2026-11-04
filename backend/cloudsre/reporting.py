@@ -125,6 +125,7 @@ def write_report(folder, journal, software):
         ),
         "versions": software,
         "model_accounting": accounting,
+        "diagnostic_routing": journal.get("diagnostic_routing"),
     }
     path = folder / "incident-report.json"
     temp = path.with_suffix(".tmp")
