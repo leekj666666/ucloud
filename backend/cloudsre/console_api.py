@@ -518,7 +518,7 @@ def install(app, store, *, token=None, evidence_roots=()):
         if format == "json":
             return JSONResponse(data, headers=headers)
         body = (
-            "# 云巡事件报告\n\n"
+            "# Tm11GPT事件报告\n\n"
             + html.escape(data["incident"]["title"])
             + "\n\n状态："
             + data["incident"]["status"]
