@@ -4,7 +4,7 @@
 Windows+Ubuntu24.04 WSL2、Docker Desktop、16GB内存，真实DeepSeek官方API；不需要GPU。开发机当前入口localhost:28080，仅本机可访问。访问码与API Key均不随包分发。可查看已恢复c2955251、已拒绝a323f0e4、已停止29468b5f等真实事件。当前业务已清理健康，界面创建任务不等于注入故障。
 
 ## 从源码开始
-克隆本仓库并使用最终提交版本。需要Python3.12+、uv0.13.5、Node24.22.1及npm、Docker、kubectl、kind。执行uv sync --frozen、在frontend执行npm ci及npm run build。工具调用运行组件需按docs/HOLMESGPT-COMMIT.txt固定commit安装到独立.venv-holmes；不要使用未固定的最新版本。
+克隆本仓库并使用最终提交版本。需要Python3.12+、uv0.13.5、Node24.22.1及npm、Docker、kubectl、kind。执行uv sync --frozen、在frontend执行npm ci及npm run build。工具调用运行组件需按docs/DIAGNOSTIC_COMPONENT_PIN.txt固定commit安装到独立.venv-holmes；不要使用未固定的最新版本。
 
 现有部署脚本的默认工作目录是~/sre-project，部分本地模型配置默认在/mnt/d/uclaude/model.env。首次运行前应核对这些路径，不宣称任意机器一键安装。模型配置仅包含本机OPENAI_BASE_URL、DEEPSEEK_API_KEY、MODEL_NAME；禁止把真实Key填入仓库。
 
@@ -20,3 +20,4 @@ Windows+Ubuntu24.04 WSL2、Docker Desktop、16GB内存，真实DeepSeek官方API
 
 ## 本轮复现边界
 旧D6做过同主机清洁部署；Tm11GPT新版完成当前开发机真实部署及浏览器/进程验收。当前尚未声明从最终GitHub提交开始在完全空白另一台主机复现通过。上述先决条件和人工核对保留，不以文档中的命令本身代替实测。
+
