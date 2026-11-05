@@ -103,6 +103,6 @@
 | 成本性能 | 原始 usage、各步骤耗时、资源峰值和效果—费用对照 |
 | 创新 | 上游能力表、自主模块、H1–H9 采纳记录、有效消融 |
 
-持续产物：CONTRIBUTIONS.md、OPTIMIZATION_LOG.md、evaluation/runs/<run-id>/、RESULTS.md、演示脚本。功能完成、实验目标、实测成果分别标注。
+持续产物：OPTIMIZATION_LOG.md、evaluation/runs/<run-id>/、RESULTS.md、演示脚本。功能完成、实验目标、实测成果分别标注。
 
 此次交付为执行梳理。下一项实际开发从 D0 开始，不再重复安装已验收的环境。
